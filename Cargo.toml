@@ -12,10 +12,10 @@ serialize_serde = []
 default = ["serialize_serde"]
 
 [dependencies]
-atlas-common = { path = "../atlas-common" }
-atlas-metrics = { path = "../atlas-metrics" }
-atlas-communication = {path = "../atlas-communication"}
-atlas-core = {path = "../atlas-core"}
+atlas-common = { path = "../Atlas-Common" }
+atlas-metrics = { path = "../Atlas-Metrics" }
+atlas-communication = {path = "../Atlas-Communication"}
+atlas-core = {path = "../Atlas-Core"}
 
 futures = "0.3.26"
 
