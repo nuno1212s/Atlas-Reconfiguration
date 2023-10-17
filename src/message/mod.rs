@@ -244,9 +244,9 @@ pub struct ReconfData;
 impl Serializable for ReconfData {
     type Message = ReconfigurationMessage;
 
-    fn verify_message_internal<NI, SV>(info_provider: &Arc<NI>, header: &Header, msg: &Self::Message) -> atlas_common::error::Result<bool>
+    fn verify_message_internal<NI, SV>(info_provider: &Arc<NI>, header: &Header, msg: &Self::Message) -> atlas_common::error::Result<()>
         where NI: NetworkInformationProvider, SV: NetworkMessageSignatureVerifier<Self, NI>, Self: Sized {
-        Ok(true)
+        Ok(())
     }
 
     //TODO: Implement capnproto messages
