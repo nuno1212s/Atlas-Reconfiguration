@@ -256,7 +256,8 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocol {
 
         let (node_type, quorum_view) = Node::init(information.bootstrap_nodes().clone(), node_type, min_stable_node_count);
 
-        let (channel_tx, channel_rx) = channel::new_bounded_sync(128);
+        let (channel_tx, channel_rx) = channel::new_bounded_sync(128, 
+        Some("Reconfiguration message channel"));
 
         let reconfigurable_node = ReconfigurableNode {
             seq_gen: SeqNoGen { seq: SeqNo::ZERO },
