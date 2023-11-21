@@ -12,6 +12,8 @@ serialize_serde = []
 default = ["serialize_serde"]
 
 [dependencies]
+anyhow = "1.0.75"
+thiserror = "1.0.50"
 atlas-common = { path = "../Atlas-Common" }
 atlas-metrics = { path = "../Atlas-Metrics" }
 atlas-communication = {path = "../Atlas-Communication"}
