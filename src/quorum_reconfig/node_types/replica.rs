@@ -348,7 +348,7 @@ impl ReplicaQuorumView {
 
                 info!("Sending stable protocol message to ordering protocol with quorum {:?}, we are part of the quorum", current_quorum_members);
 
-                self.quorum_communication.send(QuorumReconfigurationMessage::ReconfigurationProtocolStable(current_quorum_members)).unwrap();
+                self.quorum_communication.send_return(QuorumReconfigurationMessage::ReconfigurationProtocolStable(current_quorum_members)).unwrap();
             }
         } else {
             match self.current_state {
@@ -357,7 +357,7 @@ impl ReplicaQuorumView {
 
                     info!("Sending stable protocol message to ordering protocol with quorum {:?}, we are NOT part of the quorum", current_quorum_members);
 
-                    self.quorum_communication.send(QuorumReconfigurationMessage::ReconfigurationProtocolStable(current_quorum_members.clone())).unwrap();
+                    self.quorum_communication.send_return(QuorumReconfigurationMessage::ReconfigurationProtocolStable(current_quorum_members.clone())).unwrap();
 
                     return;
                 }
@@ -457,7 +457,7 @@ impl ReplicaQuorumView {
 
         self.installed_view_seq(view.sequence_number());
 
-        self.quorum_communication.send(QuorumReconfigurationMessage::AttemptToJoinQuorum).unwrap();
+        self.quorum_communication.send_return(QuorumReconfigurationMessage::AttemptToJoinQuorum).unwrap();
 
         return QuorumNodeResponse::NewView(view);
     }
@@ -680,7 +680,7 @@ impl ReplicaQuorumView {
     }
 
     fn request_entrance_from_quorum(&mut self, node: NodeId) {
-        self.quorum_communication.send(QuorumReconfigurationMessage::RequestQuorumJoin(node)).unwrap();
+        self.quorum_communication.send_return(QuorumReconfigurationMessage::RequestQuorumJoin(node)).unwrap();
     }
 
     pub fn handle_quorum_enter_request<NT>(&mut self, seq: SeqNo, node: &GeneralNodeInfo, network_node: &Arc<NT>, header: Header, message: QuorumEnterRequest) -> QuorumNodeResponse

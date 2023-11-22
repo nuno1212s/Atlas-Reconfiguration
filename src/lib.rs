@@ -285,7 +285,7 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocol {
     }
 
     fn handle_timeout(&self, timeouts: Vec<RqTimeout>) -> Result<ReconfigResponse> {
-        self.channel_tx.send(ReconfigMessage::TimeoutReceived(timeouts)).unwrap();
+        self.channel_tx.send_return(ReconfigMessage::TimeoutReceived(timeouts)).unwrap();
 
         Ok(ReconfigResponse::Running)
     }

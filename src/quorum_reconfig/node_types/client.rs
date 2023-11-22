@@ -137,7 +137,7 @@ impl ClientQuorumView {
 
                             self.quorum_view_certificate = quorum_certs.clone();
 
-                            self.channel_message.send(QuorumUpdateMessage::UpdatedQuorumView(nodes));
+                            self.channel_message.send_return(QuorumUpdateMessage::UpdatedQuorumView(nodes));
 
                             self.current_state = ClientState::Stable;
 
