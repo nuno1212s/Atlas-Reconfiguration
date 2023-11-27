@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, VecDeque};
 use std::ops::Deref;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use either::Either;
 use log::{debug, error, info, warn};
 use atlas_common::node_id::NodeId;
@@ -181,35 +181,45 @@ impl Ord for QuorumViewVotes {
 
 #[derive(Clone)]
 pub struct QuorumViewer {
-    quorum_view: Arc<RwLock<QuorumView>>,
+    quorum_view: Arc<Mutex<QuorumView>>,
 }
 
 impl QuorumViewer {
     pub fn view(&self) -> QuorumView {
-        self.quorum_view.read().unwrap().clone()
+        self.quorum_view.lock().unwrap().clone()
     }
 
     pub fn quorum_members(&self) -> Vec<NodeId> {
-        self.quorum_view.read().unwrap().quorum_members().clone()
+        self.quorum_view.lock().unwrap().quorum_members().clone()
+    }
+
+    pub(crate) fn current_f(&self) -> usize {
+        self.quorum_view.lock().unwrap().f
+    }
+
+    pub fn current_quorum_view(&self) -> (Vec<NodeId>, usize) {
+        let quorum_view = self.quorum_view.lock().unwrap();
+
+        (quorum_view.quorum_members().clone(), quorum_view.f)
     }
 
     /// This install view is direct and to prevent any concurrency issues between messages
     /// sent between protocols, etc. This should always be followed by returning [QuorumNodeResponse::NewView]
     /// So we can clean everything up
     pub fn install_view(&self, view: QuorumView) {
-        *self.quorum_view.write().unwrap() = view;
+        *self.quorum_view.lock().unwrap() = view;
     }
 }
 
 impl Orderable for QuorumViewer {
     fn sequence_number(&self) -> SeqNo {
-        self.quorum_view.read().unwrap().sequence_number()
+        self.quorum_view.lock().unwrap().sequence_number()
     }
 }
 
 impl Node {
     pub fn init(bootstrap_nodes: Vec<NodeId>, node_type: ReconfigurableNodeTypes, min_stable_node_count: usize) -> (Self, QuorumViewer) {
-        let quorum_view = Arc::new(RwLock::new(QuorumView::with_bootstrap_nodes(bootstrap_nodes)));
+        let quorum_view = Arc::new(Mutex::new(QuorumView::with_bootstrap_nodes(bootstrap_nodes)));
 
         let quorum_viewer = QuorumViewer {
             quorum_view: quorum_view.clone(),

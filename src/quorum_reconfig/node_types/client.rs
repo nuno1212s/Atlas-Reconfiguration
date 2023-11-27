@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use log::{debug, error, info};
 use atlas_common::channel::ChannelSyncTx;
@@ -7,6 +7,7 @@ use atlas_common::channel::ChannelSyncTx;
 use atlas_common::crypto::hash::Digest;
 use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::ordering::SeqNo;
+use atlas_common::quiet_unwrap;
 use atlas_communication::message::Header;
 
 use atlas_communication::reconfiguration_node::ReconfigurationNode;
@@ -31,7 +32,7 @@ enum ClientState {
 ///
 pub(crate) struct ClientQuorumView {
     current_state: ClientState,
-    current_quorum_view: Arc<RwLock<QuorumView>>,
+    current_quorum_view: Arc<Mutex<QuorumView>>,
 
     /// The set of messages that we have received that are part of the current quorum view
     /// That agree on the current
@@ -42,7 +43,7 @@ pub(crate) struct ClientQuorumView {
 }
 
 impl ClientQuorumView {
-    pub fn new(quorum_view: Arc<RwLock<QuorumView>>, message: ChannelSyncTx<QuorumUpdateMessage>, min_stable_quorum: usize) -> Self {
+    pub fn new(quorum_view: Arc<Mutex<QuorumView>>, message: ChannelSyncTx<QuorumUpdateMessage>, min_stable_quorum: usize) -> Self {
         ClientQuorumView {
             current_state: ClientState::Init,
             current_quorum_view: quorum_view,
@@ -128,7 +129,7 @@ impl ClientQuorumView {
                     if let Some((quorum_digest, quorum_certs)) = received_messages.first() {
                         if quorum_certs.len() >= needed_messages {
                             let nodes = {
-                                let mut write_guard = self.current_quorum_view.write().unwrap();
+                                let mut write_guard = self.current_quorum_view.lock().unwrap();
 
                                 *write_guard = quorum_certs.first().unwrap().message().clone();
 
@@ -137,7 +138,7 @@ impl ClientQuorumView {
 
                             self.quorum_view_certificate = quorum_certs.clone();
 
-                            self.channel_message.send_return(QuorumUpdateMessage::UpdatedQuorumView(nodes));
+                            quiet_unwrap!(self.channel_message.send(QuorumUpdateMessage::UpdatedQuorumView(nodes)), QuorumNodeResponse::Nil);
 
                             self.current_state = ClientState::Stable;
 
@@ -158,7 +159,7 @@ impl ClientQuorumView {
 
     pub(crate) fn handle_view_state_request<NT>(&self, seq_gen: &mut SeqNoGen, node: &GeneralNodeInfo, network_node: &Arc<NT>, header: Header, seq: SeqNo) -> QuorumNodeResponse
         where NT: 'static + ReconfigurationNode<ReconfData> {
-        let quorum_view = self.current_quorum_view.read().unwrap().clone();
+        let quorum_view = self.current_quorum_view.lock().unwrap().clone();
 
         let resp = ReconfigurationMessage::new(seq, ReconfigurationMessageType::QuorumReconfig(QuorumReconfigMessage::NetworkViewState(quorum_view)));
 

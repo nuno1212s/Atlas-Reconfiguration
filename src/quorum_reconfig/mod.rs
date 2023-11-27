@@ -20,6 +20,8 @@ pub struct QuorumView {
     sequence_number: SeqNo,
 
     quorum_members: Vec<NodeId>,
+
+    f: usize
 }
 
 impl Orderable for QuorumView {
@@ -33,6 +35,7 @@ impl QuorumView {
         QuorumView {
             sequence_number: SeqNo::ZERO,
             quorum_members: Vec::new(),
+            f: 0,
         }
     }
 
@@ -40,10 +43,11 @@ impl QuorumView {
         QuorumView {
             sequence_number: SeqNo::ZERO,
             quorum_members: bootstrap_nodes,
+            f: 1,
         }
     }
 
-    pub fn next_with_added_node(&self, node_id: NodeId) -> Self {
+    pub fn next_with_added_node(&self, node_id: NodeId, f: usize) -> Self {
         QuorumView {
             sequence_number: self.sequence_number.next(),
             quorum_members: {
@@ -51,6 +55,7 @@ impl QuorumView {
                 members.push(node_id);
                 members
             },
+            f,
         }
     }
 

@@ -294,6 +294,14 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocol {
         self.quorum_info.quorum_members()
     }
 
+    fn get_current_f(&self) -> usize {
+        self.quorum_info.current_f()
+    }
+
+    fn quorum_state(&self) -> (Vec<NodeId>, usize) {
+        self.quorum_info.current_quorum_view()
+    }
+
     fn is_join_certificate_valid(&self, certificate: &QuorumJoinCert<Self::Serialization>) -> bool {
         //TODO: Analyse the veracity of this join certificate according to the information we have on the
         // current quorum

@@ -155,12 +155,12 @@ impl ReplicaQuorumView {
                             debug!("Received a quorum alteration response from node {:?} while waiting for node {:?}.", response, waiting_for);
 
                             match response {
-                                QuorumAlterationResponse::Successful(node) if *waiting_for == node => {
-                                    if let Some(view) = self.handle_finished_quorum_entrance(node_inf, network_node, node) {
+                                QuorumAlterationResponse::Successful(node, new_f) if *waiting_for == node => {
+                                    if let Some(view) = self.handle_finished_quorum_entrance(node_inf, network_node, node, new_f) {
                                         return QuorumNodeResponse::NewView(view);
                                     }
                                 }
-                                QuorumAlterationResponse::Successful(node) => {
+                                QuorumAlterationResponse::Successful(node, _) => {
                                     unreachable!("Received a successful quorum alteration response for node {:?}, but we are waiting for one from node {:?}.", node, *waiting_for)
                                 }
                                 QuorumAlterationResponse::Failed(node, reason) => {
@@ -345,7 +345,6 @@ impl ReplicaQuorumView {
             self.current_state = JoiningReplicaState::JoinedQuorumWaitingForOrderProtocol;
 
             if current_quorum_members.len() >= self.min_stable_quorum {
-
                 info!("Sending stable protocol message to ordering protocol with quorum {:?}, we are part of the quorum", current_quorum_members);
 
                 self.quorum_communication.send_return(QuorumReconfigurationMessage::ReconfigurationProtocolStable(current_quorum_members)).unwrap();
@@ -611,14 +610,14 @@ impl ReplicaQuorumView {
         network_node.broadcast_reconfig_message(reconfig_message, known_nodes.into_iter());
     }
 
-    fn handle_finished_quorum_entrance<NT>(&mut self, node_inf: &GeneralNodeInfo, network_node: &Arc<NT>, node: NodeId) -> Option<QuorumView>
+    fn handle_finished_quorum_entrance<NT>(&mut self, node_inf: &GeneralNodeInfo, network_node: &Arc<NT>, node: NodeId, f: usize) -> Option<QuorumView>
         where NT: ReconfigurationNode<ReconfData> + 'static {
         match self.join_node_state {
             QuorumNodeState::WaitingQuorum(waiting_node)  if waiting_node == node => {
                 let (prev, curr) = {
                     let current_view = self.current_view.view();
 
-                    let new_view = current_view.next_with_added_node(node);
+                    let new_view = current_view.next_with_added_node(node, f);
 
                     self.current_view.install_view(new_view.clone());
 
