@@ -315,6 +315,11 @@ impl NetworkInfo {
 }
 
 impl NetworkInformationProvider for NetworkInfo {
+
+    fn get_own_id(&self) -> NodeId {
+        self.node_id
+    }
+
     fn get_own_addr(&self) -> PeerAddr {
         self.address.clone()
     }
@@ -737,7 +742,7 @@ impl GeneralNodeInfo {
             let message = NetworkReconfigMessage::NetworkJoinResponse(result);
 
             let reconfig_message = ReconfigurationMessage::new(seq, ReconfigurationMessageType::NetworkReconfig(message));
-            
+
             debug!("Responding to network join request a network join response to {:?} with message {:?}", target, reconfig_message);
 
             let _ = network.send_reconfig_message(reconfig_message, target);
