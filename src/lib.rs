@@ -1,5 +1,7 @@
 #![feature(async_fn_in_trait)]
 
+extern crate core;
+
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -30,6 +32,7 @@ pub mod message;
 pub mod network_reconfig;
 pub mod quorum_reconfig;
 mod metrics;
+mod threshold_crypto;
 
 const TIMEOUT_DUR: Duration = Duration::from_secs(3);
 

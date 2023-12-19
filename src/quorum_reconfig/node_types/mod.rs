@@ -18,6 +18,7 @@ use crate::quorum_reconfig::QuorumView;
 
 pub mod client;
 pub mod replica;
+mod replica_v2;
 
 pub(crate) struct Node {
     quorum_view: QuorumViewer,

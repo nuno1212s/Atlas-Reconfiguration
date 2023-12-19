@@ -3,8 +3,10 @@ use std::sync::Arc;
 
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
+use atlas_common::crypto::hash::Digest;
 
 use atlas_common::crypto::signature::Signature;
+use atlas_common::crypto::threshold_crypto::thold_crypto::dkg::{Ack, DealerPart};
 use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::peer_addr::PeerAddr;
@@ -111,9 +113,26 @@ pub struct ReconfigurationMessage {
 pub enum ReconfigurationMessageType {
     NetworkReconfig(NetworkReconfigMessage),
     QuorumReconfig(QuorumReconfigMessage),
+    ThresholdCrypto(ReconfData),
 }
 
 pub type NetworkJoinCert = (NodeId, Signature);
+
+/// Messages related to the threshold cryptography protocols
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+pub enum ThresholdMessages {
+    TriggerDKG(Vec<NodeId>, usize),
+    DkgDealer(OrderedBCast<DealerPart>),
+    DkgAck(OrderedBCast<Ack>),
+    
+}
+
+pub enum OrderedBCast<T> {
+    CollectMessage(T),
+    Ordering(Vec<T>),
+    Vote,
+}
 
 /// Network reconfiguration messages (Related only to the network view)
 #[derive(Clone, Debug)]
@@ -165,6 +184,17 @@ pub enum QuorumReconfigMessage {
 /// Messages that will be sent via channel to the reconfiguration module
 pub enum ReconfigMessage {
     TimeoutReceived(Vec<RqTimeout>)
+}
+
+
+#[derive(Clone)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+pub enum OrderedBCastMessage<T> {
+    Value(T),
+    //TODO: Make this verifiable such that the leader cannot
+    // Invent new values that were not sent to him
+    Order(Vec<T>),
+    OrderVote(Digest),
 }
 
 impl ReconfigurationMessage {

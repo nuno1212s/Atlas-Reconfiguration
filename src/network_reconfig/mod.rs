@@ -26,8 +26,6 @@ use crate::{NetworkProtocolResponse, SeqNoGen, TIMEOUT_DUR};
 /// Such as message definitions, important types and etc.
 ///
 /// This module will then be used by the parts of the system which must be reconfigurable
-/// (For example, the network
-
 pub type NetworkPredicate = fn(Arc<NetworkInfo>, NodeTriple) -> OneShotRx<Option<NetworkJoinRejectionReason>>;
 
 
@@ -52,7 +50,6 @@ pub struct NetworkInfo {
     /// Predicates that must be satisfied for a node to be allowed to join the network
     predicates: Vec<NetworkPredicate>,
 }
-
 
 impl NetworkInfo {
     pub fn init_from_config(config: ReconfigurableNetworkConfig) -> Self {

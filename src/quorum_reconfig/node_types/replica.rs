@@ -1,16 +1,16 @@
-use std::cmp::Ordering;
-use std::collections::{BinaryHeap, BTreeMap, BTreeSet, VecDeque};
-use std::sync::{Arc, RwLock};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::Arc;
+
 use either::Either;
 use futures::future::join_all;
-
 use log::{debug, error, info, warn};
 
 use atlas_common::async_runtime as rt;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::crypto::hash::Digest;
+use atlas_common::crypto::threshold_crypto::thold_crypto::dkg::{Ack, DealerPart, DistributedKeyGenerator};
 use atlas_common::node_id::{NodeId, NodeType};
-use atlas_common::ordering::{InvalidSeqNo, Orderable, SeqNo, tbo_advance_message_queue, tbo_pop_message, tbo_queue_message};
+use atlas_common::ordering::{Orderable, SeqNo, tbo_advance_message_queue, tbo_pop_message, tbo_queue_message};
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::reconfiguration_node::ReconfigurationNode;
 use atlas_core::reconfiguration_protocol::{AlterationFailReason, QuorumAlterationResponse, QuorumAttemptJoinResponse, QuorumReconfigurationMessage, QuorumReconfigurationResponse};
@@ -27,6 +27,9 @@ struct TboQueue {
     joining_message: VecDeque<VecDeque<StoredMessage<ReconfigurationMessage>>>,
     confirm_join_message: VecDeque<VecDeque<StoredMessage<ReconfigurationMessage>>>,
 }
+
+
+
 
 /// The state of a replica
 #[derive(Debug)]
@@ -140,7 +143,7 @@ impl ReplicaQuorumView {
                             info!("Received stable quorum response from ordering protocol, we are now stable");
 
                             // This happens when we are already a part of the quorum and we immediately start execution (boostrap node cases)
-                            self.current_state = JoiningReplicaState::Stable;
+                            self.current_state = JoiningReplicaState::Stable; 
 
                             return QuorumNodeResponse::Done;
                         }

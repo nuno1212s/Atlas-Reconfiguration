@@ -1,12 +1,11 @@
-use std::sync::Arc;
-use futures::future::join_all;
-use atlas_common::channel::OneShotRx;
-use atlas_common::node_id::NodeId;
-use atlas_common::ordering::{Orderable, SeqNo};
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::message::{NodeTriple, QuorumEnterRejectionReason, QuorumEnterResponse};
+use atlas_common::channel::OneShotRx;
+use atlas_common::node_id::NodeId;
+use atlas_common::ordering::{Orderable, SeqNo};
+
+use crate::message::{NodeTriple, QuorumEnterRejectionReason};
 
 pub mod node_types;
 
