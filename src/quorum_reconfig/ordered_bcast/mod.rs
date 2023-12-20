@@ -1,20 +1,13 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeSet, VecDeque};
 use std::sync::Arc;
-use futures::SinkExt;
+
 use log::{debug, warn};
-use atlas_common::crypto::hash::Digest;
-use atlas_common::crypto::threshold_crypto::thold_crypto::dkg::{Ack, DealerPart, DistributedKeyGenerator};
+
 use atlas_common::node_id::NodeId;
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::reconfiguration_node::ReconfigurationNode;
-use crate::message::{OrderedBCastMessage, QuorumViewCert, ReconfData, ReconfigurationMessage};
 
-/// The ordered dealer parts, decided by the leader
-struct OrderedDealerParts(Vec<usize, DealerPart>);
-
-/// The ordered Ack messages, decided by the leader and
-/// voted for by the other nodes in the quorum
-struct OrderedAcks(Vec<(usize, Ack)>);
+use crate::message::{OrderedBCast, OrderedBCastMessage, ReconfData, ReconfigurationMessageType};
 
 /// Ordering of messages received our of order
 struct PendingOrderedBCastMessages<T> {
@@ -25,23 +18,32 @@ struct PendingOrderedBCastMessages<T> {
     pending_order_vote: VecDeque<StoredMessage<OrderedBCastMessage<T>>>,
 }
 
-pub type AckOrderedBCastMessage = OrderedBCastMessage<Ack>;
-pub type DealerPartOrderedBCastMessage = OrderedBCastMessage<DealerPart>;
 
-/// In an ordered fashion, we broadcast a message to all
+/// In an ordered fashion, we broadcast a message to all members of the quorum
 ///
-struct OrderedBroadcast<T> {
+/// Ordered broadcast is a 3 phase protocol, where
+/// the first phase serves to collect all the messages,
+/// the second phase serves for the leader to propagate his decided order to the quorum
+/// and the third phase serves for all members to vote on the decided order
+///
+/// This is based on the PBFT protocol.
+/// with the difference that we do not need two rounds of voting,
+/// since we don't need to persist them across view changes, so the commit phase is removed
+///
+/// The ordered broadcast protocol always chooses the leader to be the node which starts
+/// the protocol
+pub(super) struct OrderedBroadcast<T> {
     // Our ID
     our_id: NodeId,
-
     // The leader of this ordered broadcast
     leader: NodeId,
-
     // The threshold amount of nodes needed to assure security
     threshold: usize,
-
     // The members that are partaking in this broadcast
     members: Vec<NodeId>,
+    // The function that we are going to utilize to create the messages
+    // That must be sent by this protocol
+    msg_creation_func: fn(OrderedBCast<T>) -> ReconfigurationMessageType,
     // The pending messages that we still have not processed
     pending_message: PendingOrderedBCastMessages<T>,
     // The current phase of this broadcast
@@ -49,7 +51,7 @@ struct OrderedBroadcast<T> {
 }
 
 /// The inner synchronous broadcast phase phases
-enum OrderedBCastPhase<T> {
+pub(super) enum OrderedBCastPhase<T> {
     // We are currently collecting the various possible messages
     // Which will need to be ordered and broadcast in a given order
     // By the leader
@@ -66,33 +68,28 @@ enum OrderedBCastPhase<T> {
     Done(Vec<T>),
 }
 
-/// The current state of our joining protocol.
-/// We want to achieve a common order in a byzantine
-/// fault tolerant scenario
-enum JoiningThresholdReplicaState {
-    // Initial state, where we have done nothing at all
-    Init,
-    // exchanging dealer parts and attaining a global ordering for them
-    PartExchange(OrderedBroadcast<DealerPart>),
-    // Exchanging acks and attaining a global ordering for them
-    AckExchange(OrderedBroadcast<Ack>),
-}
-
-/// A node that is currently attempting to join the network
-struct JoiningThresholdReplica {
-    // The map of each participating node, along with the index of the node in
-    // This join protocol
-    participating_nodes: BTreeMap<NodeId, usize>,
-
-    // The distributed key generator
-    dkg: DistributedKeyGenerator,
-
-    // The current enum state of the reconfiguration threshold key generation
-    // Join protocol
-    current_state: JoiningThresholdReplicaState,
-}
-
 impl<T> OrderedBroadcast<T> {
+
+    /// Initialize a new ordered broadcast instance
+    pub fn init_ordered_bcast(our_id: NodeId,
+                              leader: NodeId,
+                              threshold: usize,
+                              members: Vec<NodeId>,
+                              msg_creation_func: fn(OrderedBCast<T>) -> ReconfigurationMessageType) -> Self {
+        Self {
+            our_id,
+            leader,
+            threshold,
+            members,
+            msg_creation_func,
+            pending_message: PendingOrderedBCastMessages {
+                pending_order: Default::default(),
+                pending_order_vote: Default::default(),
+            },
+            phase: OrderedBCastPhase::CollectionPhase(Vec::new(), BTreeSet::new()),
+        }
+    }
+
     fn is_ready(&self) -> bool {
         if let OrderedBCastPhase::Done(_) = &self.phase {
             true
@@ -117,7 +114,7 @@ impl<T> OrderedBroadcast<T> {
                                 if self.our_id == self.leader {
                                     // We are the leader, so we can decide on the order
                                     // And broadcast it to the other nodes
-                                    self.decide_and_bcast_order(node);
+                                    self.decide_and_bcast_order(node, received.clone());
                                 }
                             }
                         } else {
@@ -158,14 +155,20 @@ impl<T> OrderedBroadcast<T> {
         }
     }
 
-    fn decide_and_bcast_order<NT>(&mut self, node: Arc<NT>)
+    fn decide_and_bcast_order<NT>(&mut self, node: Arc<NT>, order: Vec<T>)
         where NT: ReconfigurationNode<ReconfData> + 'static {
-        //node.broadcast_reconfig_message();
+
+        let message = self.msg_creation_func(OrderedBCast::Ordering(order));
+
+        node.broadcast_reconfig_message(message, self.members.clone().into_iter());
     }
 
     fn vote_on_order<NT>(&mut self, node: Arc<NT>)
         where NT: ReconfigurationNode<ReconfData> + 'static {
-        //node.broadcast_reconfig_message();
+
+        let message = self.msg_creation_func(OrderedBCast::Vote);
+
+        node.broadcast_reconfig_message(message, self.members.clone().into_iter());
     }
 
     fn finish(self) -> Vec<T> {

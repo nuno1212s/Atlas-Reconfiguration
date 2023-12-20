@@ -113,7 +113,7 @@ pub struct ReconfigurationMessage {
 pub enum ReconfigurationMessageType {
     NetworkReconfig(NetworkReconfigMessage),
     QuorumReconfig(QuorumReconfigMessage),
-    ThresholdCrypto(ReconfData),
+    ThresholdCrypto(ThresholdMessages),
 }
 
 pub type NetworkJoinCert = (NodeId, Signature);
@@ -122,15 +122,35 @@ pub type NetworkJoinCert = (NodeId, Signature);
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum ThresholdMessages {
-    TriggerDKG(Vec<NodeId>, usize),
+    // Trigger a new distributed key generation algorithm, with the given
+    // Quorum members and threshold
+    TriggerDKG(ThresholdDKGArgs),
+    // The ordered broadcast messages relating to the ordered broadcast protocol
     DkgDealer(OrderedBCast<DealerPart>),
     DkgAck(OrderedBCast<Ack>),
-    
 }
 
+/// The arguments for the distributed key generation protocol
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+pub struct ThresholdDKGArgs {
+    // The quorum that should participate in the key generation protocol
+    pub quorum: Vec<NodeId>,
+    // The threshold
+    pub threshold: usize,
+}
+
+/// Messages that are a part of the ordered broadcast protocol
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum OrderedBCast<T> {
+    // The message sent by other nodes to the leader with their part,
+    // Which will then be ordered by the leader and propagated to the other nodes
     CollectMessage(T),
+    // The message bcast by the leader in order to inform everyone of the correct ordering
     Ordering(Vec<T>),
+    // A vote by a member of the quorum on the ordering
+    // This is to be multicast by all nodes which agree with the ordering
     Vote,
 }
 
@@ -186,14 +206,18 @@ pub enum ReconfigMessage {
     TimeoutReceived(Vec<RqTimeout>)
 }
 
-
+/// Messages relating to the ordered broadcast protocol
+/// Which is used to order the messages that are sent by the threshold cryptography protocols
+///
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum OrderedBCastMessage<T> {
+    // Participate on the ordered broadcast protocol with a value
     Value(T),
     //TODO: Make this verifiable such that the leader cannot
     // Invent new values that were not sent to him
     Order(Vec<T>),
+    // Vote on a given order of the broadcast
     OrderVote(Digest),
 }
 
@@ -279,7 +303,15 @@ impl Serializable for ReconfData {
         Ok(())
     }
 
-    //TODO: Implement capnproto messages
+    #[cfg(feature = "serialize_capnp")]
+    fn serialize_capnp(builder: febft_capnp::messages_capnp::system::Builder, msg: &Self::Message) -> atlas_common::error::Result<()> {
+        todo!()
+    }
+
+    #[cfg(feature = "serialize_capnp")]
+    fn deserialize_capnp(reader: febft_capnp::messages_capnp::system::Reader) -> atlas_common::error::Result<Self::Message> {
+        todo!()
+    }
 }
 
 impl Orderable for ReconfigurationMessage {
@@ -309,6 +341,17 @@ impl QuorumEnterRequest {
     pub fn into_inner(self) -> NodeTriple {
         self.node_triple
     }
+}
+
+impl ThresholdDKGArgs {
+
+    pub fn init_args(quorum: Vec<NodeId>, threshold: usize) -> Self {
+        Self {
+            quorum,
+            threshold,
+        }
+    }
+
 }
 
 impl Debug for QuorumReconfigMessage {

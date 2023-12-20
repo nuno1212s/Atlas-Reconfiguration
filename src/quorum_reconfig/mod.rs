@@ -8,6 +8,8 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use crate::message::{NodeTriple, QuorumEnterRejectionReason};
 
 pub mod node_types;
+mod ordered_bcast;
+mod threshold_negotiation;
 
 pub type QuorumPredicate = fn(QuorumView, NodeTriple) -> OneShotRx<Option<QuorumEnterRejectionReason>>;
 
