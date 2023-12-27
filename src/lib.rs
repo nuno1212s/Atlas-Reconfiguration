@@ -30,10 +30,9 @@ use crate::quorum_reconfig::QuorumView;
 pub mod config;
 pub mod message;
 pub mod network_reconfig;
-pub mod quorum_reconfig;
 mod metrics;
-mod threshold_crypto;
-mod quorum_config;
+pub mod threshold_crypto;
+pub mod quorum_config;
 
 const TIMEOUT_DUR: Duration = Duration::from_secs(3);
 

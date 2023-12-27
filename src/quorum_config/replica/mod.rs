@@ -1,10 +1,13 @@
+use std::sync::Arc;
 use thiserror::Error;
 
 use atlas_common::Err;
 use atlas_common::error::*;
+use atlas_common::ordering::Orderable;
 use atlas_communication::message::{Header, StoredMessage};
+use atlas_communication::reconfiguration_node::ReconfigurationNode;
 
-use crate::message::{CommittedQC, LockedQC, ParticipatingQuorumMessage, QuorumAcceptResponse, QuorumCommitAcceptResponse};
+use crate::message::{CommittedQC, LockedQC, ParticipatingQuorumMessage, QuorumAcceptResponse, QuorumCommitAcceptResponse, ReconfData};
 use crate::quorum_config::replica::enter_quorum::EnteringQuorum;
 use crate::quorum_config::replica::quorum_member::{QuorumMember, ReplicaPhase};
 use crate::quorum_reconfig::node_types::QuorumViewer;
@@ -24,22 +27,26 @@ pub enum CurrentState {
     AFK,
     // We are out of the quorum, but are in the process of being accepted
     OutOfQuorum(EnteringQuorum),
+    // We are currently a member of the quorum
     QuorumMember(QuorumMember),
 }
 
 
 impl QuorumParticipator {
-    pub fn handle_message(&mut self, header: Header, message: ParticipatingQuorumMessage) -> Result<()> {
+    pub fn handle_message<NT>(&mut self, node: &Arc<NT>, header: Header, message: ParticipatingQuorumMessage) -> Result<()>
+        where NT: ReconfigurationNode<ReconfData> + 'static {
         match &mut self.state {
             CurrentState::AFK => {
                 // We have nothing to do here
                 return Err!(ParticipatorHandleMessageError::CurrentlyAfk);
             }
             CurrentState::OutOfQuorum(info) => {
-                info.handle_message( header, message)?;
+                let x = info.handle_message(node, header, message)?;
+                
+                
             }
             CurrentState::QuorumMember(member) => {
-                member.handle_message(&self.viewer.view(), header, message)?;
+                member.handle_message(&self.viewer.view(), node, header, message)?;
             }
         }
 
@@ -53,7 +60,7 @@ pub enum ParticipatorHandleMessageError {
     CurrentlyAfk
 }
 
-pub trait QuorumCert {
+pub trait QuorumCert : Orderable {
     type IndividualType: QuorumCertPart;
 
     fn quorum(&self) -> &QuorumView;

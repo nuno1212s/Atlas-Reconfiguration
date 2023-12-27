@@ -119,7 +119,7 @@ pub enum ReconfigurationMessageType {
     // Messages related to the threshold crypto protocol
     ThresholdCrypto(ThresholdMessages),
     // The messages related to the configuration of the quorum
-    QuorumConfig(ParticipatingQuorumMessage)
+    QuorumConfig(ParticipatingQuorumMessage),
 }
 
 pub type NetworkJoinCert = (NodeId, Signature);
@@ -298,6 +298,12 @@ pub enum QuorumCommitResponse {
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub struct QuorumCommitAcceptResponse {
     view: QuorumView,
+    // Include the locked QC we are voting on so that we
+    // Are effectively signing the already established certificate
+    // Adding a big layer of security
+    // It also guarantees that a replica can't commit vote for any round if that
+    // Round is not yet locked.
+    qc: LockedQC
 }
 
 /// The accept response for the quorum join request, containing the next quorum view
@@ -314,7 +320,10 @@ pub struct QuorumAcceptResponse {
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum QuorumRejectionReason {
     NotAuthorized,
-    CurrentlyAccepting,
+    AlreadyAccepting,
+    AlreadyAPartOfQuorum,
+    SeqNoTooOld,
+    SeqNoTooAdvanced
 }
 
 impl ReconfigurationMessage {
@@ -469,6 +478,22 @@ impl Debug for QuorumReconfigMessage {
     }
 }
 
+impl QuorumAcceptResponse {
+    pub fn init(view: QuorumView) -> Self {
+        Self {
+            view,
+        }
+    }
+}
+
+impl QuorumCommitAcceptResponse {
+    pub fn init(view: QuorumView, locked_qc: LockedQC) -> Self {
+        Self {
+            view,
+            qc: locked_qc,
+        }
+    }
+}
 
 impl LockedQC {
     pub fn new(proofs: Vec<StoredMessage<QuorumAcceptResponse>>) -> Self {

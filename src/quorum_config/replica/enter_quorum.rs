@@ -9,6 +9,8 @@ use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::reconfiguration_node::ReconfigurationNode;
 use crate::message::{CommittedQC, LockedQC, ParticipatingQuorumMessage, QuorumAcceptResponse, QuorumCommitAcceptResponse, QuorumCommitResponse, QuorumEnterResponse, QuorumJoinResponse, ReconfData, ReconfigurationMessage, ReconfigurationMessageType};
+use crate::quorum_config::network::QuorumConfigNetworkNode;
+use crate::quorum_config::replica::{EnterQuorumOperationResponse, QuorumCert};
 use crate::quorum_reconfig::QuorumView;
 
 /// The information we have about the quorum
@@ -62,6 +64,13 @@ pub enum LeaderPhase {
     Done,
 }
 
+/// The responses possible while executing this operation
+pub enum EnterQuorumOperationResponse {
+    // We entered the quorum
+    EnterQuorum(QuorumView),
+    Processing,
+}
+
 impl Orderable for EnteringQuorum {
     fn sequence_number(&self) -> SeqNo {
         self.seq_no
@@ -81,8 +90,8 @@ impl EnteringQuorum {
     }
 
     /// Handles a message we have received from another node
-    pub fn handle_message<NT>(&mut self, header: Header, message: ParticipatingQuorumMessage, node: Arc<NT>) -> Result<()>
-        where NT: ReconfigurationNode<ReconfData> + 'static {
+    pub fn handle_message<NT>(&mut self, node: &Arc<NT>, header: Header, message: ParticipatingQuorumMessage) -> Result<EnterQuorumOperationResponse>
+        where NT: QuorumConfigNetworkNode + 'static {
         match &mut self.phase {
             LeaderPhase::LockingQC(received_approvals) => {
                 match message {
@@ -107,11 +116,8 @@ impl EnteringQuorum {
 
                     let qc = LockedQC::new(locked_qc);
 
-                    let message = ParticipatingQuorumMessage::CommitQuorum(qc);
-
-                    let reconfig_message = ReconfigurationMessage::new(self.sequence_number(), ReconfigurationMessageType::QuorumConfig(message));
-
-                    quiet_unwrap!(node.broadcast_reconfig_message(reconfig_message, self.currently_known_quorum.quorum_members().clone().into_iter()));
+                    quiet_unwrap!(node.broadcast_quorum_message(self.sequence_number(), ParticipatingQuorumMessage::CommitQuorum(qc),
+                        self.currently_known_quorum.quorum_members().clone().into_iter()));
                 }
             }
             LeaderPhase::CommittingQC(received_commit_votes) => {
@@ -136,11 +142,12 @@ impl EnteringQuorum {
 
                     let commit_qc = CommittedQC::new(commit_qc);
 
-                    let message = ParticipatingQuorumMessage::Decided(commit_qc);
+                    let quorum = commit_qc.quorum().clone();
 
-                    let reconfig_message = ReconfigurationMessage::new(self.sequence_number(), ReconfigurationMessageType::QuorumConfig(message));
+                    quiet_unwrap!(node.broadcast_quorum_message(self.sequence_number(), ParticipatingQuorumMessage::Decided(commit_qc),
+                        self.currently_known_quorum.quorum_members().clone().into_iter()));
 
-                    quiet_unwrap!(node.broadcast_reconfig_message(reconfig_message, self.currently_known_quorum.quorum_members().clone().into_iter()));
+                    return Ok(EnterQuorumOperationResponse::EnterQuorum(quorum));
                 }
             }
             LeaderPhase::Done => {
@@ -148,7 +155,7 @@ impl EnteringQuorum {
             }
         }
 
-        Ok(())
+        Ok(EnterQuorumOperationResponse::Processing)
     }
 
     fn is_done(&self) -> bool {
