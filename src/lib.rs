@@ -33,6 +33,7 @@ pub mod network_reconfig;
 pub mod quorum_reconfig;
 mod metrics;
 mod threshold_crypto;
+mod quorum_config;
 
 const TIMEOUT_DUR: Duration = Duration::from_secs(3);
 

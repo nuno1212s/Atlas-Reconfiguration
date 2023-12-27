@@ -1,24 +1,69 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, VecDeque};
 use std::ops::Deref;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
+
 use either::Either;
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
+
+use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
-use atlas_common::ordering::{InvalidSeqNo, Orderable, SeqNo, tbo_advance_message_queue, tbo_queue_message};
+use atlas_common::ordering::{Orderable, SeqNo, tbo_advance_message_queue, tbo_queue_message};
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::reconfiguration_node::ReconfigurationNode;
 use atlas_core::reconfiguration_protocol::ReconfigurableNodeTypes;
 use atlas_core::timeouts::Timeouts;
-use crate::message::{QuorumEnterRequest, QuorumEnterResponse, QuorumReconfigMessage, QuorumViewCert, ReconfData, ReconfigQuorumMessage, ReconfigurationMessage, ReconfigurationMessageType};
+
 use crate::{GeneralNodeInfo, QuorumProtocolResponse, SeqNoGen};
+use crate::message::{QuorumEnterRequest, QuorumEnterResponse, QuorumReconfigMessage, QuorumViewCert, ReconfData, ReconfigQuorumMessage, ReconfigurationMessage, ReconfigurationMessageType};
 use crate::quorum_reconfig::node_types::client::ClientQuorumView;
 use crate::quorum_reconfig::node_types::replica::ReplicaQuorumView;
 use crate::quorum_reconfig::QuorumView;
 
 pub mod client;
 pub mod replica;
-mod replica_v2;
+
+mod operations {
+    mod quorum_join_op;
+    mod quorum_info_op;
+    mod quorum_leave_op;
+}
+
+pub enum OpMessageAnalysisResult {
+    Execute,
+    Handled,
+}
+
+pub enum OpMessageProcessingResult {
+    Done,
+    NotDone,
+}
+
+pub trait QuorumOp: Orderable {
+
+    type OpMessage;
+
+    /// Analyse a message received by us and figure out if we need to do anything
+    fn analyse_message<NT>(node: &Node, nt_node: Arc<NT>, header: &Header, message: &Self::OpMessage) -> Result<OpMessageAnalysisResult>
+        where NT: ReconfigurationNode<ReconfData> + 'static;
+
+    /// Process a message that has been received and the analysis result from running [Self::analyse_message] was [OpMessageAnalysisResult::Execute]
+    fn process_message<NT>(&mut self, nt_node: Arc<NT>, header: Header, message: Self::OpMessage) -> Result<OpMessageProcessingResult>
+        where NT: ReconfigurationNode<ReconfData> + 'static;
+
+    /// Is this operation completed?
+    fn is_done(&self) -> bool;
+
+    /// Complete the operation and return the new quorum view
+    fn complete(self, node: &mut Node) -> Result<()>;
+}
+
+/// A node that is participating in the network
+pub struct ParticipatingNode {
+    seq_no_counter: SeqNo,
+    quorum_viewer: QuorumViewer,
+
+}
 
 pub(crate) struct Node {
     quorum_view: QuorumViewer,
@@ -186,6 +231,13 @@ pub struct QuorumViewer {
 }
 
 impl QuorumViewer {
+    
+    pub fn from_bootstrap_nodes(bootstrap_nodes: Vec<NodeId>) -> Self {
+        Self {
+            quorum_view: Arc::new(Mutex::new(QuorumView::with_bootstrap_nodes(bootstrap_nodes))),
+        }
+    }
+    
     pub fn view(&self) -> QuorumView {
         self.quorum_view.lock().unwrap().clone()
     }

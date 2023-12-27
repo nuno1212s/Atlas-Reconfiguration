@@ -1,5 +1,6 @@
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
+use getset::Getters;
 
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
@@ -46,6 +47,7 @@ pub enum QuorumEnterRejectionReason {
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum QuorumEnterResponse {
+    // We have accepted the request to join the quorum
     Successful(QuorumView),
 
     Rejected(QuorumEnterRejectionReason),
@@ -111,9 +113,13 @@ pub struct ReconfigurationMessage {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum ReconfigurationMessageType {
+    // The network reconfiguration protocol messages
     NetworkReconfig(NetworkReconfigMessage),
     QuorumReconfig(QuorumReconfigMessage),
+    // Messages related to the threshold crypto protocol
     ThresholdCrypto(ThresholdMessages),
+    // The messages related to the configuration of the quorum
+    QuorumConfig(ParticipatingQuorumMessage)
 }
 
 pub type NetworkJoinCert = (NodeId, Signature);
@@ -126,8 +132,8 @@ pub enum ThresholdMessages {
     // Quorum members and threshold
     TriggerDKG(ThresholdDKGArgs),
     // The ordered broadcast messages relating to the ordered broadcast protocol
-    DkgDealer(OrderedBCast<DealerPart>),
-    DkgAck(OrderedBCast<Ack>),
+    DkgDealer(OrderedBCastMessage<DealerPart>),
+    DkgAck(OrderedBCastMessage<Ack>),
 }
 
 /// The arguments for the distributed key generation protocol
@@ -138,20 +144,6 @@ pub struct ThresholdDKGArgs {
     pub quorum: Vec<NodeId>,
     // The threshold
     pub threshold: usize,
-}
-
-/// Messages that are a part of the ordered broadcast protocol
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-pub enum OrderedBCast<T> {
-    // The message sent by other nodes to the leader with their part,
-    // Which will then be ordered by the leader and propagated to the other nodes
-    CollectMessage(T),
-    // The message bcast by the leader in order to inform everyone of the correct ordering
-    Ordering(Vec<T>),
-    // A vote by a member of the quorum on the ordering
-    // This is to be multicast by all nodes which agree with the ordering
-    Vote,
 }
 
 /// Network reconfiguration messages (Related only to the network view)
@@ -219,6 +211,110 @@ pub enum OrderedBCastMessage<T> {
     Order(Vec<T>),
     // Vote on a given order of the broadcast
     OrderVote(Digest),
+}
+
+/// A type to encapsulate all of the operation messages
+#[derive(Clone)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+pub enum OperationMessage {
+    QuorumInfoOp(QuorumObtainInfoOpMessage),
+    QuorumJoinOp(QuorumJoinOpMessage),
+}
+
+/// Messages related to the [QuorumObtainInformationOperation]
+#[derive(Clone)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+pub enum QuorumObtainInfoOpMessage {
+    // Request information about the current quorum
+    RequestInformationMessage,
+    // A response message containing the information about the quorum
+    QuorumInformationResponse(QuorumView),
+}
+
+/// Messages related to the [NodeQuorumJoinOperation]
+#[derive(Clone)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+pub enum QuorumJoinOpMessage {
+    // A request made to join the quorum, to be broadcast to the quorum
+    RequestJoinQuorum,
+    // A response message, to be broadcast to the quorum
+    JoinQuorumResponse(QuorumEnterResponse),
+}
+
+/// Messages to be exchanged when a node is attempting to join the quorum
+#[derive(Clone)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+pub enum ParticipatingQuorumMessage {
+    RequestJoinQuorum,
+    // A response message by a quorum member, with the response about the request to enter
+    // The quorum. With 2f + 1 of these responses, we can form a certificate
+    // Which will be accepted by all correct members of the quorum
+    LockedQuorumResponse(QuorumJoinResponse),
+    // The node has been accepted into the quorum
+    CommitQuorum(LockedQC),
+    // The response to the commit quorum request, the last step in the quorum reconfiguration protocol
+    CommitQuorumResponse(QuorumCommitResponse),
+    // The commit certificate for the quorum.
+    // Any replica that receives this, will move to the new quorum
+    // And notify it's ordering protocol that it has done so.
+    Decided(CommittedQC),
+}
+
+/// The locked quorum certificate, containing all of the accepts sent by 2f+1 of the replicas
+#[derive(Clone)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+pub struct LockedQC {
+    proofs: Vec<StoredMessage<QuorumAcceptResponse>>,
+}
+
+/// The committed quorum certificate, containing all of the commits sent by 2f+1 of the replicas
+#[derive(Clone)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+pub struct CommittedQC {
+    proofs: Vec<StoredMessage<QuorumCommitAcceptResponse>>,
+}
+
+/// The message that will be sent to the reconfiguration module
+#[derive(Clone)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+pub enum QuorumJoinResponse {
+    // We have been accepted into the quorum
+    Accepted(QuorumAcceptResponse),
+    // We have been rejected to join the quorum
+    Rejected(QuorumRejectionReason),
+}
+
+/// The response to the quorum commit request
+#[derive(Clone)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+pub enum QuorumCommitResponse {
+    Accepted(QuorumCommitAcceptResponse),
+    Rejected(QuorumRejectionReason),
+}
+
+/// The accept response for the quorum commit request, containing the next quorum view
+#[derive(Clone, Getters)]
+#[get = "pub"]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+pub struct QuorumCommitAcceptResponse {
+    view: QuorumView,
+}
+
+/// The accept response for the quorum join request, containing the next quorum view
+#[derive(Clone, Getters)]
+#[get = "pub"]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+pub struct QuorumAcceptResponse {
+    // The view of the quorum
+    view: QuorumView,
+}
+
+/// The rejection reason for the quorum join request
+#[derive(Clone)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+pub enum QuorumRejectionReason {
+    NotAuthorized,
+    CurrentlyAccepting,
 }
 
 impl ReconfigurationMessage {
@@ -344,14 +440,12 @@ impl QuorumEnterRequest {
 }
 
 impl ThresholdDKGArgs {
-
     pub fn init_args(quorum: Vec<NodeId>, threshold: usize) -> Self {
         Self {
             quorum,
             threshold,
         }
     }
-
 }
 
 impl Debug for QuorumReconfigMessage {
@@ -374,3 +468,41 @@ impl Debug for QuorumReconfigMessage {
         }
     }
 }
+
+
+impl LockedQC {
+    pub fn new(proofs: Vec<StoredMessage<QuorumAcceptResponse>>) -> Self {
+        Self {
+            proofs,
+        }
+    }
+
+    pub fn quorum(&self) -> &QuorumView {
+        &self.proofs.first().unwrap().message().view()
+    }
+
+    pub fn proofs(&self) -> &Vec<StoredMessage<QuorumAcceptResponse>> {
+        &self.proofs
+    }
+
+    pub fn into_inner(self) -> Vec<StoredMessage<QuorumAcceptResponse>> {
+        self.proofs
+    }
+}
+
+impl CommittedQC {
+    pub fn new(proofs: Vec<StoredMessage<QuorumCommitAcceptResponse>>) -> Self {
+        Self {
+            proofs,
+        }
+    }
+
+    pub fn proofs(&self) -> &Vec<StoredMessage<QuorumCommitAcceptResponse>> {
+        &self.proofs
+    }
+
+    pub fn into_inner(self) -> Vec<StoredMessage<QuorumCommitAcceptResponse>> {
+        self.proofs
+    }
+}
+

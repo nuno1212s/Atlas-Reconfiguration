@@ -4,12 +4,11 @@ use serde::{Deserialize, Serialize};
 use atlas_common::channel::OneShotRx;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
+use atlas_communication::message::{Header, StoredMessage};
 
-use crate::message::{NodeTriple, QuorumEnterRejectionReason};
+use crate::message::{NodeTriple, QuorumEnterRejectionReason, QuorumViewCert};
 
 pub mod node_types;
-mod ordered_bcast;
-mod threshold_negotiation;
 
 pub type QuorumPredicate = fn(QuorumView, NodeTriple) -> OneShotRx<Option<QuorumEnterRejectionReason>>;
 

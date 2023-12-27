@@ -29,8 +29,6 @@ struct TboQueue {
 }
 
 
-
-
 /// The state of a replica
 #[derive(Debug)]
 enum JoiningReplicaState {

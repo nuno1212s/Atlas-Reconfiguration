@@ -3,6 +3,10 @@ use atlas_common::crypto::threshold_crypto::thold_crypto::dkg::DistributedKeyGen
 use atlas_common::node_id::NodeId;
 use atlas_core::reconfiguration_protocol::QuorumThresholdCrypto;
 
+
+mod ordered_bcast;
+mod threshold_negotiation;
+
 /// The threshold crypto struct, which will be used to
 /// handle all threshold crypto operations
 pub struct ThresholdCrypto {
