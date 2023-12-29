@@ -9,3 +9,11 @@ pub struct ObservingQuorumNode {
 
 }
 
+
+impl ObservingQuorumNode {
+    pub fn initialize(observer: QuorumObserver) -> Self {
+        Self {
+            viewer: observer,
+        }
+    }
+}

@@ -3,22 +3,23 @@ use thiserror::Error;
 
 use atlas_common::Err;
 use atlas_common::error::*;
-use atlas_common::ordering::Orderable;
+use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::reconfiguration_node::ReconfigurationNode;
 
-use crate::message::{CommittedQC, LockedQC, ParticipatingQuorumMessage, QuorumAcceptResponse, QuorumCommitAcceptResponse, ReconfData};
-use crate::quorum_config::replica::enter_quorum::EnteringQuorum;
-use crate::quorum_config::replica::quorum_member::{QuorumMember, ReplicaPhase};
-use crate::quorum_reconfig::node_types::QuorumViewer;
-use crate::quorum_reconfig::QuorumView;
+use crate::message::{CommittedQC, LockedQC, QuorumJoinReconfMessages, QuorumAcceptResponse, QuorumCommitAcceptResponse, ReconfData};
+use crate::quorum_config::{QuorumObserver, QuorumView};
+use crate::quorum_config::replica::enter_quorum::{EnteringQuorum, EnterQuorumOperationResponse};
+use crate::quorum_config::replica::quorum_member::{QuorumMember, QuorumMemberOperationResponse, ReplicaPhase};
+use crate::QuorumProtocolResponse;
+
 
 mod enter_quorum;
 mod quorum_member;
 
 /// This a struct encapsulating all of the logic of a replica participating in the quorum
 pub struct QuorumParticipator {
-    viewer: QuorumViewer,
+    viewer: QuorumObserver,
     state: CurrentState,
 }
 
@@ -33,24 +34,85 @@ pub enum CurrentState {
 
 
 impl QuorumParticipator {
-    pub fn handle_message<NT>(&mut self, node: &Arc<NT>, header: Header, message: ParticipatingQuorumMessage) -> Result<()>
-        where NT: ReconfigurationNode<ReconfData> + 'static {
+    pub fn initialize(observer: QuorumObserver) -> Self {
+        Self {
+            viewer: observer,
+            state: CurrentState::AFK,
+        }
+    }
+
+    pub fn iterate<NT>(&mut self, node: Arc<NT>) -> Result<QuorumProtocolResponse> {
         match &mut self.state {
+            CurrentState::AFK => {
+                // We have nothing to do here
+                Err!(ParticipatorHandleMessageError::CurrentlyAfk)
+            }
+            CurrentState::OutOfQuorum(entering) => {
+                match entering.iterate(node)? {
+                    EnterQuorumOperationResponse::EnterQuorum(quorum) => {
+                        self.handle_quorum_entered(quorum)
+                    }
+                    EnterQuorumOperationResponse::Processing => {
+                        Ok(QuorumProtocolResponse::Nil)
+                    }
+                }
+            }
+            CurrentState::QuorumMember(quorum_member) => {
+                match quorum_member.iterate(node)? {
+                    QuorumMemberOperationResponse::MovedQuorum(quorum) => {
+                        self.handle_quorum_altered(quorum)
+                    }
+                    QuorumMemberOperationResponse::Processing => {
+                        Ok(QuorumProtocolResponse::Nil)
+                    }
+                }
+            }
+        }
+    }
+
+    fn handle_quorum_entered(&mut self, quorum: QuorumView) -> Result<QuorumProtocolResponse> {
+        self.state = CurrentState::QuorumMember(QuorumMember::init());
+
+        self.viewer.install_quorum_view(quorum);
+
+        return Ok(QuorumProtocolResponse::Done);
+    }
+
+    fn handle_quorum_altered(&mut self, quorum: QuorumView) -> Result<QuorumProtocolResponse> {
+
+        self.viewer.install_quorum_view(quorum);
+
+        Ok(QuorumProtocolResponse::Nil)
+    }
+
+    pub fn handle_message<NT>(&mut self, node: &Arc<NT>, header: Header, seq_no: SeqNo, message: QuorumJoinReconfMessages) -> Result<QuorumProtocolResponse>
+        where NT: ReconfigurationNode<ReconfData> + 'static {
+        return match &mut self.state {
             CurrentState::AFK => {
                 // We have nothing to do here
                 return Err!(ParticipatorHandleMessageError::CurrentlyAfk);
             }
             CurrentState::OutOfQuorum(info) => {
-                let x = info.handle_message(node, header, message)?;
-                
-                
+                match info.handle_message(node, header, message)? {
+                    EnterQuorumOperationResponse::EnterQuorum(quorum) => {
+                        self.handle_quorum_entered(quorum)
+                    }
+                    EnterQuorumOperationResponse::Processing => {
+                        Ok(QuorumProtocolResponse::Nil)
+                    }
+                }
             }
             CurrentState::QuorumMember(member) => {
-                member.handle_message(&self.viewer.view(), node, header, message)?;
+                match member.handle_message(node, &self.viewer.current_view(), header, seq_no, message)? {
+                    QuorumMemberOperationResponse::MovedQuorum(quorum) => {
+                        self.handle_quorum_altered(quorum)
+                    }
+                    QuorumMemberOperationResponse::Processing => {
+                        Ok(QuorumProtocolResponse::Nil)
+                    }
+                }
             }
-        }
-
-        Ok(())
+        };
     }
 }
 
@@ -60,7 +122,7 @@ pub enum ParticipatorHandleMessageError {
     CurrentlyAfk
 }
 
-pub trait QuorumCert : Orderable {
+pub trait QuorumCert: Orderable {
     type IndividualType: QuorumCertPart;
 
     fn quorum(&self) -> &QuorumView;
@@ -88,6 +150,12 @@ pub fn get_quorum_for_n(n: usize) -> usize {
 }
 
 
+impl Orderable for LockedQC {
+    fn sequence_number(&self) -> SeqNo {
+        self.quorum().sequence_number()
+    }
+}
+
 impl QuorumCert for LockedQC {
     type IndividualType = StoredMessage<QuorumAcceptResponse>;
 
@@ -103,6 +171,12 @@ impl QuorumCert for LockedQC {
 impl QuorumCertPart for StoredMessage<QuorumAcceptResponse> {
     fn view(&self) -> &QuorumView {
         self.message().view()
+    }
+}
+
+impl Orderable for CommittedQC {
+    fn sequence_number(&self) -> SeqNo {
+        self.quorum().sequence_number()
     }
 }
 

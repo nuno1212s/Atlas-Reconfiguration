@@ -4,11 +4,14 @@ use thiserror::Error;
 use atlas_common::crypto::hash::Digest;
 use atlas_common::Err;
 use atlas_common::node_id::NodeId;
-use atlas_common::ordering::SeqNo;
+use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::{Header, StoredMessage};
-use crate::message::{QuorumObtainInfoOpMessage, QuorumViewCert};
-use crate::quorum_reconfig::QuorumView;
+use atlas_core::reconfiguration_protocol::QuorumReconfigurationResponse;
+use crate::quorum_config::{Node, QuorumView};
+use crate::message::{OperationMessage, QuorumJoinReconfMessages, QuorumObtainInfoOpMessage, QuorumViewCert};
+use crate::quorum_config::operations::{Operation, OperationExecutionCandidateError, OperationResponse, OpExecID};
 
+/// Obtains the quorum information
 pub struct ObtainQuorumInfoOP {
     // The sequence number of this operation
     sequence_number: SeqNo,
@@ -27,11 +30,14 @@ pub struct ObtainQuorumInfoOP {
 
 /// The current state of the operation
 enum OperationState {
+    Waiting,
     ReceivingInfo(usize),
     Done,
 }
 
 impl ObtainQuorumInfoOP {
+    
+    pub(super) const LAST_EXEC: &'static str = "LAST_EXECUTED";
 
     pub fn initialize(seq_no: SeqNo, threshold: usize, current_known_quorum: Vec<NodeId>) -> Self {
 
@@ -43,7 +49,7 @@ impl ObtainQuorumInfoOP {
             threshold,
             received: BTreeSet::new(),
             quorum_views: BTreeMap::new(),
-            state: OperationState::ReceivingInfo(0),
+            state: OperationState::Waiting,
         }
     }
 
@@ -102,6 +108,56 @@ impl ObtainQuorumInfoOP {
         } else {
             Err!(QuorumObtainInfoError::FailedNoMessagesReceived)
         }
+    }
+
+    fn from_operation_message(msg: OperationMessage) -> QuorumObtainInfoOpMessage {
+        match msg {
+            OperationMessage::QuorumInfoOp(msg) => msg,
+            _ => unreachable!("Received wrong message type")
+        }
+    }
+
+}
+
+impl Orderable for ObtainQuorumInfoOP {
+    fn sequence_number(&self) -> SeqNo {
+        todo!()
+    }
+}
+
+impl Operation for ObtainQuorumInfoOP {
+
+    const OP_NAME: &'static str = "ObtainQuorumInfo";
+
+    fn can_execute(observer: &Node) -> Result<(), OperationExecutionCandidateError> {
+        Ok(())
+    }
+
+    fn op_exec_id(&self) -> OpExecID {
+        todo!()
+    }
+
+    fn iterate<NT>(&mut self, node: &mut Node, network: &NT) -> atlas_common::error::Result<OperationResponse> {
+        if let OperationState::Waiting = self.state {
+            self.state = OperationState::ReceivingInfo(0);
+
+
+        }
+
+        Ok(OperationResponse::Processing)
+
+    }
+
+    fn handle_received_message<NT>(&mut self, node: &mut Node, network: &NT, header: Header, seq_no: SeqNo, message: OperationMessage) -> atlas_common::error::Result<OperationResponse> {
+        todo!()
+    }
+
+    fn handle_quorum_response<NT>(&mut self, node: &mut Node, network: &NT, quorum_response: QuorumReconfigurationResponse) -> atlas_common::error::Result<OperationResponse> {
+        todo!()
+    }
+
+    fn finish<NT>(&mut self, observer: &mut Node, network: &NT) -> atlas_common::error::Result<()> {
+        todo!()
     }
 }
 

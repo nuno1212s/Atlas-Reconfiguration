@@ -1,35 +1,33 @@
 use std::collections::{BTreeSet, VecDeque};
-use std::sync::Arc;
+use std::future::Pending;
 use log::{error, info, warn};
 use thiserror::Error;
-use atlas_common::{Err, quiet_unwrap};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
+use atlas_common::quiet_unwrap;
 use atlas_communication::message::{Header, StoredMessage};
-use atlas_communication::reconfiguration_node::ReconfigurationNode;
-use crate::message::{CommittedQC, LockedQC, QuorumJoinReconfMessages, QuorumAcceptResponse, QuorumCommitAcceptResponse, QuorumCommitResponse, QuorumEnterResponse, QuorumJoinResponse, ReconfData, ReconfigurationMessage, ReconfigurationMessageType};
+use atlas_core::reconfiguration_protocol::QuorumReconfigurationResponse;
+use crate::message::{CommittedQC, LockedQC, OperationMessage, QuorumAcceptResponse, QuorumCommitAcceptResponse, QuorumCommitResponse, QuorumJoinReconfMessages, QuorumJoinResponse};
 use crate::quorum_config::network::QuorumConfigNetworkNode;
-use crate::quorum_config::replica::{QuorumCert};
-use crate::quorum_config::QuorumView;
+use crate::quorum_config::Node;
+use crate::quorum_config::operations::{Operation, OperationExecutionCandidateError, OperationResponse, OpExecID};
+use crate::quorum_config::operations::quorum_info_op::ObtainQuorumInfoOP;
+use crate::quorum_config::replica::QuorumCert;
 
-/// The information we have about the quorum
-/// during our process of entering the quorum
-pub struct EnteringQuorum {
-    seq_no: SeqNo,
-    currently_known_quorum: QuorumView,
+/// The operation to enter the quorum
+pub struct EnterQuorumOperation {
+    // The execution ID of this operation
+    op_seq: OpExecID,
+    // The votes that we have received so far
     received_votes: BTreeSet<NodeId>,
+    // The threshold of votes we need to receive
     threshold: usize,
-    // The messages we have received while we are not ready to receive them
+    // The messages that we have to analyse once we are ready to
     pending_messages: PendingMessages,
-    // The rejections we have received from other nodes
-    phase: LeaderPhase,
-}
 
-/// Messages that are pending since we are not ready to receive them
-struct PendingMessages {
-    // The commit messages we have received
-    pending_commit_message: VecDeque<StoredMessage<QuorumJoinReconfMessages>>,
+    // The phase of the currently executing operation
+    phase: OperationPhase,
 }
 
 /// The phase of the leader in the quorum reconfiguration protocol
@@ -42,7 +40,7 @@ struct PendingMessages {
 ///
 /// With this vote and collect based protocol, we assure that the leader is the one with the
 /// burden, which makes sense since he is the one that wants to join the protocol
-pub enum LeaderPhase {
+pub enum OperationPhase {
     Waiting,
     // We start by broadcasting our intent to join the quorum
     // Which will yield locked QC responses, where each of the correct
@@ -65,58 +63,70 @@ pub enum LeaderPhase {
     Done,
 }
 
-/// The responses possible while executing this operation
-pub enum EnterQuorumOperationResponse {
-    // We entered the quorum
-    EnterQuorum(QuorumView),
-    Processing,
+/// Messages that are pending since we are not ready to receive them
+struct PendingMessages {
+    // The commit messages we have received
+    pending_commit_message: VecDeque<StoredMessage<QuorumJoinReconfMessages>>,
 }
 
-impl Orderable for EnteringQuorum {
+impl Orderable for EnterQuorumOperation {
     fn sequence_number(&self) -> SeqNo {
-        self.seq_no
+        self.op_seq
     }
 }
 
-impl EnteringQuorum {
-    pub fn init_operation(current_quorum: QuorumView, threshold: usize) -> Self {
-        Self {
-            seq_no: current_quorum.sequence_number(),
-            currently_known_quorum: current_quorum,
-            received_votes: Default::default(),
-            threshold,
-            pending_messages: Default::default(),
-            phase: LeaderPhase::LockingQC(Default::default()),
+impl EnterQuorumOperation {
+    fn unwrap_operation_message(message: OperationMessage) -> QuorumJoinReconfMessages {
+        match message {
+            OperationMessage::QuorumReconfiguration(message) => message,
+            _ => unreachable!("Received non quorum join reconf message in enter quorum operation")
         }
     }
+}
 
-    /// A method to iterate
-    pub fn iterate<NT>(&mut self, node: Arc<NT>) -> Result<EnterQuorumOperationResponse>
-        where NT: QuorumConfigNetworkNode + 'static {
-        return match &mut self.phase {
-            LeaderPhase::Waiting => {
+impl Operation for EnterQuorumOperation {
+    const OP_NAME: &'static str = "ENTER_QUORUM";
 
-                info!("Broadcasting enter quorum request to known quorum: {:?}", self.currently_known_quorum);
+    fn can_execute(observer: &Node) -> std::result::Result<(), OperationExecutionCandidateError> {
+        let last_execution = observer.data().get(ObtainQuorumInfoOP::OP_NAME, ObtainQuorumInfoOP::LAST_EXEC);
 
-                self.phase = LeaderPhase::CommittingQC(Default::default());
+        if let None = last_execution {
+            return Err(OperationExecutionCandidateError::RequirementsNotMet(format!("{}", JoinExecErr::QuorumInformationMustBeObtained)));
+        }
 
-                node.broadcast_quorum_message(self.sequence_number().next(), QuorumJoinReconfMessages::RequestJoinQuorum,
-                                              self.currently_known_quorum.quorum_members().clone().into_iter())?;
-
-                Ok(EnterQuorumOperationResponse::Processing)
-            }
-            _ => {
-                Ok(EnterQuorumOperationResponse::Processing)
-            }
-        };
+        Ok(())
     }
 
-    /// Handles a message we have received from another node
-    pub fn handle_message<NT>(&mut self, node: &Arc<NT>, header: Header, message: QuorumJoinReconfMessages) -> Result<EnterQuorumOperationResponse>
+    fn op_exec_id(&self) -> OpExecID {
+        self.op_seq
+    }
+
+    fn iterate<NT>(&mut self, node: &mut Node, network: &NT) -> Result<OperationResponse>
         where NT: QuorumConfigNetworkNode + 'static {
+        if let OperationPhase::Waiting = &self.phase {
+            let current_view = node.observer.current_view();
+
+            info!("Broadcasting enter quorum request to known quorum: {:?}", current_view);
+
+            self.phase = OperationPhase::CommittingQC(Default::default());
+
+            network.broadcast_quorum_message(self.sequence_number().next(), QuorumJoinReconfMessages::RequestJoinQuorum,
+                                             current_view.quorum_members().clone().into_iter())?;
+        }
+
+        Ok(OperationResponse::Processing)
+    }
+
+    fn handle_received_message<NT>(&mut self, node: &mut Node, network: &NT, header: Header, seq_no: SeqNo, message: OperationMessage) -> Result<OperationResponse>
+        where NT: QuorumConfigNetworkNode + 'static {
+
+        let message = Self::unwrap_operation_message(message);
+
+        let current_view = node.observer.current_view();
+
         match &mut self.phase {
-            LeaderPhase::Waiting => {}
-            LeaderPhase::LockingQC(received_approvals) => {
+            OperationPhase::Waiting => {}
+            OperationPhase::LockingQC(received_approvals) => {
                 match message {
                     QuorumJoinReconfMessages::RequestJoinQuorum => {}
                     QuorumJoinReconfMessages::LockedQuorumResponse(lock_vote) => {
@@ -133,17 +143,17 @@ impl EnteringQuorum {
                 }
 
                 if received_approvals.len() >= self.threshold {
-                    let phase = std::mem::replace(&mut self.phase, LeaderPhase::CommittingQC(Default::default()));
+                    let phase = std::mem::replace(&mut self.phase, OperationPhase::CommittingQC(Default::default()));
 
                     let locked_qc = phase.unwrap_locked_qc();
 
                     let qc = LockedQC::new(locked_qc);
 
-                    quiet_unwrap!(node.broadcast_quorum_message(self.sequence_number(), QuorumJoinReconfMessages::CommitQuorum(qc),
-                        self.currently_known_quorum.quorum_members().clone().into_iter()));
+                    quiet_unwrap!(network.broadcast_quorum_message(self.sequence_number(), QuorumJoinReconfMessages::CommitQuorum(qc),
+                        current_view.quorum_members().clone().into_iter()));
                 }
             }
-            LeaderPhase::CommittingQC(received_commit_votes) => {
+            OperationPhase::CommittingQC(received_commit_votes) => {
                 match message {
                     QuorumJoinReconfMessages::CommitQuorumResponse(commit_vote) => {
                         match commit_vote {
@@ -159,7 +169,7 @@ impl EnteringQuorum {
                 }
 
                 if received_commit_votes.len() >= self.threshold {
-                    let phase = std::mem::replace(&mut self.phase, LeaderPhase::Done);
+                    let phase = std::mem::replace(&mut self.phase, OperationPhase::Done);
 
                     let commit_qc = phase.unwrap_commit_qc();
 
@@ -168,28 +178,27 @@ impl EnteringQuorum {
                     let quorum = commit_qc.quorum().clone();
 
                     quiet_unwrap!(node.broadcast_quorum_message(self.sequence_number(), QuorumJoinReconfMessages::Decided(commit_qc),
-                        self.currently_known_quorum.quorum_members().clone().into_iter()));
+                        current_view.quorum_members().clone().into_iter()));
 
-                    return Ok(EnterQuorumOperationResponse::EnterQuorum(quorum));
+                    return Ok(crate::quorum_config::replica::enter_quorum::EnterQuorumOperationResponse::EnterQuorum(quorum));
                 }
             }
-            LeaderPhase::Done => {
+            OperationPhase::Done => {
                 warn!("Received message while we are done with the protocol");
             }
         }
 
-        Ok(EnterQuorumOperationResponse::Processing)
+        Ok(OperationResponse::Processing)
     }
 
-    fn is_done(&self) -> bool {
-        matches!(self.phase, LeaderPhase::Done)
+    fn handle_quorum_response<NT>(&mut self, node: &mut Node, network: &NT, quorum_response: QuorumReconfigurationResponse) -> Result<OperationResponse>
+        where NT: QuorumConfigNetworkNode + 'static {
+        todo!()
     }
-}
 
-#[derive(Error, Debug)]
-pub enum EnteringQuorumError {
-    #[error("We are not able to approve join requests while we are joining the quorum")]
-    CannotApproveJoinRequestsWhileJoining
+    fn finish<NT>(&mut self, observer: &mut Node, network: &NT) -> Result<()> where NT: QuorumConfigNetworkNode + 'static {
+        todo!()
+    }
 }
 
 impl PendingMessages {
@@ -217,18 +226,8 @@ impl Default for PendingMessages {
     }
 }
 
-impl LeaderPhase {
-    fn unwrap_locked_qc(self) -> Vec<StoredMessage<QuorumAcceptResponse>> {
-        match self {
-            LeaderPhase::LockingQC(locked_qc) => locked_qc,
-            _ => unreachable!("Called unwrap_locked_qc on a non-locking phase")
-        }
-    }
-
-    fn unwrap_commit_qc(self) -> Vec<StoredMessage<QuorumCommitAcceptResponse>> {
-        match self {
-            LeaderPhase::CommittingQC(commit_qc) => commit_qc,
-            _ => unreachable!("Called unwrap_commit_qc on a non-committing phase")
-        }
-    }
+#[derive(Error, Debug)]
+pub enum JoinExecErr {
+    #[error("The Obtain quorum information operation is required for this operation to execute")]
+    QuorumInformationMustBeObtained,
 }

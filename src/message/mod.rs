@@ -18,8 +18,8 @@ use atlas_communication::serialize::{Buf, Serializable};
 use atlas_core::serialize::ReconfigurationProtocolMessage;
 use atlas_core::timeouts::RqTimeout;
 
-use crate::QuorumView;
 use crate::network_reconfig::KnownNodes;
+use crate::quorum_config::QuorumView;
 
 pub(crate) mod signatures;
 
@@ -115,11 +115,10 @@ pub struct ReconfigurationMessage {
 pub enum ReconfigurationMessageType {
     // The network reconfiguration protocol messages
     NetworkReconfig(NetworkReconfigMessage),
-    QuorumReconfig(QuorumReconfigMessage),
     // Messages related to the threshold crypto protocol
     ThresholdCrypto(ThresholdMessages),
     // The messages related to the configuration of the quorum
-    QuorumConfig(ParticipatingQuorumMessage),
+    QuorumConfig(QuorumJoinReconfMessages),
 }
 
 pub type NetworkJoinCert = (NodeId, Signature);
@@ -131,8 +130,9 @@ pub enum ThresholdMessages {
     // Trigger a new distributed key generation algorithm, with the given
     // Quorum members and threshold
     TriggerDKG(ThresholdDKGArgs),
-    // The ordered broadcast messages relating to the ordered broadcast protocol
+    // The ordered broadcast messages relating to the dealer part of the DKG protocol
     DkgDealer(OrderedBCastMessage<DealerPart>),
+    // The ordered broadcast messages relating to the ack part of the DKG protocol
     DkgAck(OrderedBCastMessage<Ack>),
 }
 
@@ -159,40 +159,6 @@ pub enum NetworkReconfigMessage {
 /// A certificate that a given node sent a quorum view
 pub type QuorumViewCert = StoredMessage<QuorumView>;
 
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-pub enum ReconfigQuorumMessage {
-    /// The first message step in the quorum reconfiguration protocol
-    JoinMessage(NodeId),
-
-    ConfirmJoin(NodeId),
-}
-
-#[derive(Clone)]
-#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-pub enum QuorumReconfigMessage {
-    /// A state request for the current network view
-    NetworkViewStateRequest,
-    /// The response to the state request
-    NetworkViewState(QuorumView),
-    /// A request to join the current quorum
-    QuorumEnterRequest(QuorumEnterRequest),
-    /// The quorum reconfiguration message type, exchanged between quorum members
-    /// to reconfigure the quorum
-    QuorumReconfig(ReconfigQuorumMessage),
-    /// Responses to the requesting node.
-    /// These can be delivered either right upon reception (in case the node doesn't qualify
-    /// or we are currently reconfiguring)
-    QuorumEnterResponse(QuorumEnterResponse),
-    /// An update given to the quorum members, to update their quorum view when a new node joins
-    /// or leaves the quorum
-    QuorumUpdate(QuorumView),
-    /// A request to leave the current quorum
-    QuorumLeaveRequest(QuorumLeaveRequest),
-    /// The response to the request to leave the quorum
-    QuorumLeaveResponse(QuorumLeaveResponse),
-}
-
 /// Messages that will be sent via channel to the reconfiguration module
 pub enum ReconfigMessage {
     TimeoutReceived(Vec<RqTimeout>)
@@ -218,7 +184,7 @@ pub enum OrderedBCastMessage<T> {
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum OperationMessage {
     QuorumInfoOp(QuorumObtainInfoOpMessage),
-    QuorumJoinOp(QuorumJoinOpMessage),
+    QuorumReconfiguration(QuorumJoinReconfMessages)
 }
 
 /// Messages related to the [QuorumObtainInformationOperation]
@@ -231,20 +197,10 @@ pub enum QuorumObtainInfoOpMessage {
     QuorumInformationResponse(QuorumView),
 }
 
-/// Messages related to the [NodeQuorumJoinOperation]
-#[derive(Clone)]
-#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-pub enum QuorumJoinOpMessage {
-    // A request made to join the quorum, to be broadcast to the quorum
-    RequestJoinQuorum,
-    // A response message, to be broadcast to the quorum
-    JoinQuorumResponse(QuorumEnterResponse),
-}
-
 /// Messages to be exchanged when a node is attempting to join the quorum
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-pub enum ParticipatingQuorumMessage {
+pub enum QuorumJoinReconfMessages {
     RequestJoinQuorum,
     // A response message by a quorum member, with the response about the request to enter
     // The quorum. With 2f + 1 of these responses, we can form a certificate
@@ -453,27 +409,6 @@ impl ThresholdDKGArgs {
         Self {
             quorum,
             threshold,
-        }
-    }
-}
-
-impl Debug for QuorumReconfigMessage {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-
-        // Debug implementation for QuorumReconfigMessage
-        match self {
-            QuorumReconfigMessage::NetworkViewStateRequest => write!(f, "NetworkViewStateRequest"),
-            QuorumReconfigMessage::NetworkViewState(quorum_view) => write!(f, "NetworkViewState()"),
-            QuorumReconfigMessage::QuorumEnterRequest(quorum_enter_request) => write!(f, "QuorumEnterRequest()"),
-            QuorumReconfigMessage::QuorumEnterResponse(quorum_enter_response) => write!(f, "QuorumEnterResponse()"),
-            QuorumReconfigMessage::QuorumLeaveRequest(quorum_leave_request) => write!(f, "QuorumLeaveRequest()"),
-            QuorumReconfigMessage::QuorumLeaveResponse(quorum_leave_response) => write!(f, "QuorumLeaveResponse()"),
-            QuorumReconfigMessage::QuorumReconfig(reconf) => {
-                write!(f, "QuorumReconfig({:?})", reconf)
-            }
-            QuorumReconfigMessage::QuorumUpdate(view) => {
-                write!(f, "QuorumUpdate({:?})", view)
-            }
         }
     }
 }

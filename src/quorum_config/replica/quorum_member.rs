@@ -1,4 +1,3 @@
-use core::slice::heapsort;
 use std::cmp::Ordering;
 use std::sync::Arc;
 use either::Either;
@@ -11,11 +10,10 @@ use atlas_common::error::*;
 use atlas_common::ordering::{InvalidSeqNo, SeqNo};
 use atlas_communication::message::Header;
 
-use crate::message::{CommittedQC, LockedQC, ParticipatingQuorumMessage, QuorumAcceptResponse, QuorumCommitAcceptResponse, QuorumCommitResponse, QuorumJoinResponse, QuorumRejectionReason};
+use crate::message::{CommittedQC, LockedQC, QuorumJoinReconfMessages, QuorumAcceptResponse, QuorumCommitAcceptResponse, QuorumCommitResponse, QuorumJoinResponse, QuorumRejectionReason};
 use crate::quorum_config::network::QuorumConfigNetworkNode;
 use crate::quorum_config::replica::{get_f_for_n, get_quorum_for_n, QuorumCert, QuorumCertPart};
-use crate::quorum_reconfig::node_types::QuorumViewer;
-use crate::quorum_reconfig::QuorumView;
+use crate::quorum_config::QuorumView;
 
 
 /// Quorum information
@@ -51,25 +49,36 @@ pub enum QuorumMemberOperationResponse {
 
 
 impl QuorumMember {
-    pub fn handle_message<NT>(&mut self, node: &Arc<NT>, current_view: &QuorumView, header: Header, seq_no: SeqNo, message: ParticipatingQuorumMessage)
+    pub fn init() -> Self {
+        Self {
+            locked_qc: None,
+            committed_qc: None,
+            current_phase: ReplicaPhase::Waiting,
+        }
+    }
+
+    pub fn iterate<NT>(&mut self, _node: Arc<NT>) -> Result<QuorumMemberOperationResponse> {
+        Ok(QuorumMemberOperationResponse::Processing)
+    }
+
+    pub fn handle_message<NT>(&mut self, node: &Arc<NT>, current_view: &QuorumView, header: Header, seq_no: SeqNo, message: QuorumJoinReconfMessages)
                               -> Result<QuorumMemberOperationResponse>
         where NT: QuorumConfigNetworkNode + 'static {
-        match message {
-            ParticipatingQuorumMessage::RequestJoinQuorum => {
-                let result = self.handle_received_join_request(node, seq_no, header, current_view.clone())?;
+
+        return match message {
+            QuorumJoinReconfMessages::RequestJoinQuorum => {
+                self.handle_received_join_request(node, seq_no, header, current_view.clone())
             }
-            ParticipatingQuorumMessage::CommitQuorum(qc) => {
-                let result = self.handle_received_locked_qc(node, header, qc, current_view)?;
+            QuorumJoinReconfMessages::CommitQuorum(qc) => {
+                self.handle_received_locked_qc(node, header, qc, current_view)
             }
-            ParticipatingQuorumMessage::Decided(commit_qc) => {
-                let result = self.handle_received_committed_qc(commit_qc, current_view)?;
+            QuorumJoinReconfMessages::Decided(commit_qc) => {
+                self.handle_received_committed_qc(commit_qc, current_view)
             }
             _ => {
-                return Err!(QuorumMemberError::QuorumMemberReceivingVotes);
+                Err!(QuorumMemberError::QuorumMemberReceivingVotes)
             }
         }
-
-        Ok(QuorumMemberOperationResponse::Processing)
     }
 
     /// Handle us having received a join request from another node
@@ -90,7 +99,7 @@ impl QuorumMember {
                         // We are waiting for a new member to try to join our quorum
                         let next_view = current_view.next_with_added_node(header.from(), get_f_for_n(current_view.quorum_members().len() + 1));
 
-                        let accepted_response = QuorumJoinResponse::Accepted(
+                        response = QuorumJoinResponse::Accepted(
                             QuorumAcceptResponse::init(next_view.clone())
                         );
 
@@ -105,7 +114,7 @@ impl QuorumMember {
             }
         }
 
-        quiet_unwrap!(node.send_quorum_config_message(next_view.sequence_number(), ParticipatingQuorumMessage::LockedQuorumResponse(accepted_response),
+        quiet_unwrap!(node.send_quorum_config_message(seq_no, QuorumJoinReconfMessages::LockedQuorumResponse(response),
             header.from()));
 
         // We have already accepted that another node joins the quorum
@@ -124,7 +133,8 @@ impl QuorumMember {
 
         match &self.current_phase {
             ReplicaPhase::Waiting => {
-                self.current_phase = ReplicaPhase::CommittedQC(quorum.clone());
+                self.locked_qc = Some(locked_qc);
+                self.current_phase = ReplicaPhase::CommittedQC(locked_qc.quorum().clone());
             }
             ReplicaPhase::LockedQC(currently_locked) => {
 
@@ -141,14 +151,14 @@ impl QuorumMember {
                 We had agreed to the quorum {:?}", locked_qc.quorum(), currently_locked);
 
                 let quorum = locked_qc.quorum().clone();
-                
+
                 self.locked_qc = Some(locked_qc.clone());
 
                 self.current_phase = ReplicaPhase::CommittedQC(quorum.clone());
-                
+
                 let response = QuorumCommitResponse::Accepted(QuorumCommitAcceptResponse::init(quorum, locked_qc));
 
-                quiet_unwrap!(node.send_quorum_config_message(quorum.sequence_number(), ParticipatingQuorumMessage::CommitQuorumResponse(response),
+                quiet_unwrap!(node.send_quorum_config_message(quorum.sequence_number(), QuorumJoinReconfMessages::CommitQuorumResponse(response),
                     header.from()));
             }
             ReplicaPhase::CommittedQC(_) => {
@@ -169,19 +179,27 @@ impl QuorumMember {
             todo!()
         }
 
-        let quorum = committed_qc.quorum();
+        let quorum = committed_qc.quorum().clone();
 
         match &self.current_phase {
             ReplicaPhase::Waiting => {
-                self.current_phase = ReplicaPhase::CommittedQC(quorum.clone());
+                info!("We have received a committed qc while we were still in the waiting phase. Accepted it directly and moved to quorum {:?}", quorum);
+
+                self.current_phase = ReplicaPhase::Waiting;
+                self.locked_qc = None;
+                self.committed_qc = None;
+
+                return Ok(QuorumMemberOperationResponse::MovedQuorum(quorum.clone()));
             }
             ReplicaPhase::LockedQC(_) => {
-                info!("We have received a committed qc that was not super seeded by a locked qc")
+                info!("We have received a committed qc that was not super seeded by a locked qc");
 
                 todo!("We have received a committed QC while we are still waiting for the locked QC, handle this")
             }
             ReplicaPhase::CommittedQC(committed_to_quorum) => {
                 // We have already received a locked QC since we are in committed QC.
+
+
 
                 if *committed_to_quorum != *quorum {
                     // Well this is awkward. We have a locked QC for a given quorum but now we have received a
