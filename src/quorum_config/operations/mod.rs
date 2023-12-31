@@ -29,6 +29,7 @@ pub enum OperationObj {
 pub enum OperationResponse {
     /// The operation has been completed, and the replica can move on to the next one
     Completed,
+    CompletedFailed,
     /// The operation is still in progress, and the replica should wait for the next iteration
     Processing,
     /// We have issued a quorum reconfiguration request and are waiting for the response
@@ -74,6 +75,14 @@ impl OperationObj {
             OperationObj::QuorumInfoOp(_) => ObtainQuorumInfoOP::op_name(),
             OperationObj::QuorumJoinOp(_) => EnterQuorumOperation::op_name(),
             OperationObj::QuorumAcceptOp(_) => QuorumAcceptNodeOperation::op_name(),
+        }
+    }
+
+    pub fn can_execute(&self, observer: &InternalNode) -> std::result::Result<(), OperationExecutionCandidateError> {
+        match self {
+            OperationObj::QuorumInfoOp(_) => ObtainQuorumInfoOP::can_execute(observer),
+            OperationObj::QuorumJoinOp(_) => EnterQuorumOperation::can_execute(observer),
+            OperationObj::QuorumAcceptOp(_) => QuorumAcceptNodeOperation::can_execute(observer),
         }
     }
 

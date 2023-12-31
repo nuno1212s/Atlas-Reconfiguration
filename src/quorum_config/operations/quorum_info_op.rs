@@ -52,7 +52,6 @@ impl ObtainQuorumInfoOP {
 
     pub fn respond_to_request<NT>(node: &InternalNode, network: &NT, header: Header) -> atlas_common::error::Result<()>
         where NT: QuorumConfigNetworkNode + 'static {
-
         let quorum_info = QuorumObtainInfoOpMessage::QuorumInformationResponse(node.observer().current_view().clone());
 
         let op_message_type = OperationMessage::QuorumInfoOp(quorum_info);
@@ -125,6 +124,7 @@ impl Operation for ObtainQuorumInfoOP {
                 match &mut self.state {
                     OperationState::Waiting => {}
                     OperationState::ReceivingInfo(received) if self.received.insert(header.from()) => {
+                        debug!("Received quorum information from node {:?} with information {:?}, digest {:?}", header.from(), quorum, header.digest());
                         *received += 1;
 
                         let digest = header.digest().clone();
@@ -132,7 +132,9 @@ impl Operation for ObtainQuorumInfoOP {
                         self.quorum_views.entry(digest).or_insert_with(Vec::new).push(StoredMessage::new(header, quorum));
 
                         if *received >= self.threshold {
-                            if self.quorum_views.values().filter(|certs| certs.len() >= self.threshold).count() >= self.threshold {
+                            if self.quorum_views.values().filter(|certs| certs.len() >= self.threshold).count() > 0 {
+                                info!("Received enough responses, and enough matching quorum views, finishing operation");
+
                                 self.state = OperationState::Done;
 
                                 return Ok(OperationResponse::Completed);
@@ -153,7 +155,7 @@ impl Operation for ObtainQuorumInfoOP {
     }
 
     fn handle_quorum_response<NT>(&mut self, node: &mut InternalNode, network: &NT, quorum_response: QuorumReconfigurationResponse)
-        -> atlas_common::error::Result<OperationResponse> {
+                                  -> atlas_common::error::Result<OperationResponse> {
         Ok(OperationResponse::Processing)
     }
 

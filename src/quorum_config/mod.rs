@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::collections::HashMap;
-use atlas_common::Err;
+use atlas_common::{Err, quiet_unwrap};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
@@ -45,9 +45,19 @@ pub enum ReplicaState {
     Member,
 }
 
+/// The current state of the client
+pub enum ClientState {
+    Awaiting,
+    ObtainingInfo,
+    Idle,
+}
+
 /// The type of node we are representing
 pub enum NodeType {
-    ClientNode(ChannelSyncTx<QuorumUpdateMessage>),
+    ClientNode {
+        quorum_comm: ChannelSyncTx<QuorumUpdateMessage>,
+        current_state: ClientState,
+    },
     QuorumNode {
         quorum_communication: ChannelSyncTx<QuorumReconfigurationMessage>,
         quorum_responses: ChannelSyncRx<QuorumReconfigurationResponse>,
@@ -70,7 +80,7 @@ pub struct InternalNode {
     #[getset(get_mut = "pub", get = "pub")]
     data: NodeOpData,
 
-    #[get = "pub"]
+    #[getset(get = "pub", get_mut = "pub(super)")]
     node_type: NodeType,
 }
 
@@ -206,9 +216,7 @@ impl Node {
 
     pub fn iterate<NT>(&mut self, network: &NT) -> Result<QuorumProtocolResponse>
         where NT: QuorumConfigNetworkNode + 'static {
-        self.ongoing_ops.iterate(&mut self.node, network)?;
-
-        Ok(QuorumProtocolResponse::Nil)
+        self.ongoing_ops.iterate(&mut self.node, network)
     }
 
     pub fn handle_message<NT>(&mut self, network: &NT, header: Header, message: OperationMessage) -> Result<QuorumProtocolResponse>
@@ -223,19 +231,26 @@ impl Node {
 }
 
 impl InternalNode {
+    fn init_node_type_from(node_type: ReconfigurableNodeTypes) -> NodeType {
+        match node_type {
+            ReconfigurableNodeTypes::ClientNode(tx) => NodeType::ClientNode {
+                quorum_comm: tx,
+                current_state: ClientState::Awaiting,
+            },
+            ReconfigurableNodeTypes::QuorumNode(tx, rx) => NodeType::QuorumNode {
+                quorum_communication: tx,
+                quorum_responses: rx,
+                current_state: ReplicaState::Awaiting,
+            },
+        }
+    }
+
     fn init_with_observer(node_id: NodeId, observer: QuorumObserver, node_type: ReconfigurableNodeTypes) -> Self {
         Self {
             node_id,
             observer,
             data: NodeOpData::new(),
-            node_type: match node_type {
-                ReconfigurableNodeTypes::ClientNode(tx) => NodeType::ClientNode(tx),
-                ReconfigurableNodeTypes::QuorumNode(tx, rx) => NodeType::QuorumNode {
-                    quorum_communication: tx,
-                    quorum_responses: rx,
-                    current_state: ReplicaState::Awaiting,
-                },
-            },
+            node_type: Self::init_node_type_from(node_type),
         }
     }
 
@@ -244,14 +259,7 @@ impl InternalNode {
             node_id,
             observer: QuorumObserver::from_bootstrap(bootstrap_nodes),
             data: NodeOpData::new(),
-            node_type: match node_type {
-                ReconfigurableNodeTypes::ClientNode(tx) => NodeType::ClientNode(tx),
-                ReconfigurableNodeTypes::QuorumNode(tx, rx) => NodeType::QuorumNode {
-                    quorum_communication: tx,
-                    quorum_responses: rx,
-                    current_state: ReplicaState::Awaiting,
-                },
-            },
+            node_type: Self::init_node_type_from(node_type),
         }
     }
 
@@ -281,26 +289,37 @@ impl OnGoingOperations {
         Ok(())
     }
 
-    fn handle_and_finish_operation_result<NT>(&mut self, node: &mut InternalNode, network: &NT, operation_name: &'static str, result: OperationResponse) -> Result<()>
-        where NT: QuorumConfigNetworkNode + 'static {
-        self.handle_operation_result(node, network, operation_name, result.clone());
-
-        if let OperationResponse::Completed = result {
-            self.finish_operation_by_name(operation_name, node, network)?;
-        }
-
-        Ok(())
-    }
-
-    fn handle_operation_result<NT>(&mut self, node: &mut InternalNode, network: &NT, operation_name: &'static str, result: OperationResponse)
+    fn handle_operation_result<NT>(&mut self, node: &mut InternalNode, network: &NT, operation_name: &'static str, result: OperationResponse) -> Result<QuorumProtocolResponse>
         where NT: QuorumConfigNetworkNode + 'static {
         match result {
-            OperationResponse::Completed => {
+            OperationResponse::Completed | OperationResponse::CompletedFailed => {
+                self.finish_operation_by_name(operation_name, node, network)?;
+
                 if let Some(str) = &self.awaiting_reconfig_response {
                     if **str == *operation_name {
                         info!("The operation {} has completed, and we are no longer awaiting a response", operation_name);
 
                         self.awaiting_reconfig_response = None;
+                    }
+                }
+
+                let is_part_of_quorum = node.is_part_of_quorum();
+
+                match node.node_type_mut() {
+                    NodeType::ClientNode { .. } => {}
+                    NodeType::QuorumNode { current_state, .. } => {
+                        if let ReplicaState::ObtainingInfo = current_state {
+                            if is_part_of_quorum {
+                                *current_state = ReplicaState::Member;
+
+                                return Ok(QuorumProtocolResponse::DoneInitialSetup);
+                            } else if operation_name == ObtainQuorumInfoOP::OP_NAME {
+                                //TODO: This should only be done if we have completed with success, not failure
+                                *current_state = ReplicaState::Joining;
+
+                                self.launch_quorum_join_op(node)?;
+                            }
+                        }
                     }
                 }
             }
@@ -313,11 +332,43 @@ impl OnGoingOperations {
             }
             OperationResponse::Processing => {}
         }
+
+        Ok(QuorumProtocolResponse::Nil)
     }
 
     /// Iterate all ongoing operations
-    pub fn iterate<NT>(&mut self, node: &mut InternalNode, network: &NT) -> Result<()>
+    pub fn iterate<NT>(&mut self, node: &mut InternalNode, network: &NT) -> Result<QuorumProtocolResponse>
         where NT: QuorumConfigNetworkNode + 'static {
+        match &mut node.node_type {
+            NodeType::ClientNode { current_state, .. } => {
+                match current_state {
+                    ClientState::Awaiting => {
+                        if !self.has_operation_of_type(ObtainQuorumInfoOP::OP_NAME) {
+                            info!("Launching quorum info operation as we have not yet obtained the quorum info");
+
+                            *current_state = ClientState::ObtainingInfo;
+
+                            self.launch_quorum_obtain_info_op(node)?;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            NodeType::QuorumNode { current_state, .. } => {
+                match current_state {
+                    ReplicaState::Awaiting => {
+                        if !self.has_operation_of_type(ObtainQuorumInfoOP::OP_NAME) {
+                            info!("Launching quorum info operation as we have not yet obtained the quorum info");
+
+                            *current_state = ReplicaState::ObtainingInfo;
+
+                            self.launch_quorum_obtain_info_op(node)?;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
 
         let mut finished_ops = Vec::new();
 
@@ -332,46 +383,69 @@ impl OnGoingOperations {
                 }
             };
 
-            if let OperationResponse::Completed = result {
-                finished_ops.push(*op_name);
+            match result {
+                OperationResponse::Completed | OperationResponse::CompletedFailed => {
+                    finished_ops.push((*op_name, result));
+                }
+                OperationResponse::Processing => {}
+                OperationResponse::AwaitingResponseProtocol => {}
             }
         }
 
-        finished_ops.into_iter().for_each(|op_name| {
-            self.handle_operation_result(node, network, op_name, OperationResponse::Completed);
+        let res: Result<Vec<QuorumProtocolResponse>> = finished_ops.into_iter().map(|(op_name, op_res)| {
+            self.handle_operation_result(node, network, op_name, op_res)
+        }).collect();
 
-            self.finish_operation_by_name(op_name, node, network).unwrap();
-        });
-
-        Ok(())
+        res.map(|responses| {
+            responses.into_iter().reduce(|acc, res| {
+                match (&acc, &res) {
+                    (QuorumProtocolResponse::DoneInitialSetup, _) => acc,
+                    (_, QuorumProtocolResponse::DoneInitialSetup) => res,
+                    (QuorumProtocolResponse::UpdatedQuorum(_), _) => acc,
+                    (_, QuorumProtocolResponse::UpdatedQuorum(_)) => res,
+                    _ => QuorumProtocolResponse::Nil
+                }
+            }).unwrap_or(QuorumProtocolResponse::Nil)
+        })
     }
 
     pub fn handle_message<NT>(&mut self, node: &mut InternalNode, network: &NT,
-                              header: Header, message: OperationMessage) -> Result<()>
+                              header: Header, message: OperationMessage) -> Result<QuorumProtocolResponse>
         where NT: QuorumConfigNetworkNode + 'static
     {
+        let response: OperationResponse;
+        let op_name: &'static str;
+
         match &message {
             OperationMessage::QuorumInfoOp(info) => {
                 match info {
                     QuorumObtainInfoOpMessage::RequestInformationMessage => {
                         ObtainQuorumInfoOP::respond_to_request(node, network, header)?;
+
+                        return Ok(QuorumProtocolResponse::Nil);
                     }
                     QuorumObtainInfoOpMessage::QuorumInformationResponse(_) => {
-                        self.get_mut_operation_of_type(ObtainQuorumInfoOP::OP_NAME).unwrap().handle_received_message(node, network, header, message)?;
+                        let possible_operation = self.get_mut_operation_of_type(ObtainQuorumInfoOP::OP_NAME);
+
+                        if let Some(op) = possible_operation {
+                            response = op.handle_received_message(node, network, header, message)?;
+                            op_name = op.op_name();
+                        } else {
+                            warn!("Received a quorum information response, but we are not awaiting one (No on going operation). Ignoring it.");
+
+                            return Ok(QuorumProtocolResponse::Nil);
+                        }
                     }
                 }
             }
             OperationMessage::QuorumReconfiguration(reconf_message) => {
                 match node.node_type() {
-                    NodeType::ClientNode(_) => {
+                    NodeType::ClientNode { .. } => {
                         error!("Received a quorum reconfiguration message on a client node");
+
+                        return Ok(QuorumProtocolResponse::Nil);
                     }
                     NodeType::QuorumNode { current_state, .. } => {
-                        let enter_operation = self.get_mut_operation_of_type(EnterQuorumOperation::OP_NAME);
-
-                        let response: OperationResponse;
-                        let op_name: &'static str;
-
                         if self.has_operation_of_type(QuorumAcceptNodeOperation::OP_NAME) {
                             let operation = self.get_mut_operation_of_type(QuorumAcceptNodeOperation::OP_NAME).unwrap();
 
@@ -397,32 +471,34 @@ impl OnGoingOperations {
                                 _ => error!("This message should have already been handled by an operation")
                             }
 
-                            return Ok(());
+                            return Ok(QuorumProtocolResponse::Nil);
                         }
-
-                        self.handle_and_finish_operation_result(node, network, op_name, response)?;
                     }
                 }
             }
         }
 
-        Ok(())
+        self.handle_operation_result(node, network, op_name, response)
     }
 
     fn finish_operation_by_name<NT>(&mut self, op_name: &'static str, node: &mut InternalNode, network: &NT) -> Result<()>
         where NT: QuorumConfigNetworkNode + 'static
     {
-        let option = self.ongoing_operations.remove(op_name);
+        let possible_op = self.ongoing_operations.remove(op_name);
 
-        if let Some(operation) = option {
+        info!("Attempting to finish operation by name {} (Is present {})", op_name,possible_op.is_some());
+
+        if let Some(operation) = possible_op {
             self.finish_operation(node, network, operation)?;
-        }
+        };
 
         Ok(())
     }
 
     fn finish_operation<NT>(&mut self, node: &mut InternalNode, network: &NT, op: OperationObj) -> Result<()>
         where NT: QuorumConfigNetworkNode + 'static {
+        info!("Finished operation {}", op.op_name());
+
         op.finish(node, network)?;
 
         Ok(())
@@ -439,6 +515,31 @@ impl OnGoingOperations {
 
     pub fn has_operation_of_type(&self, op_type: &'static str) -> bool {
         self.ongoing_operations.contains_key(op_type)
+    }
+
+    pub fn launch_quorum_join_op(&mut self, node: &InternalNode) -> Result<()> {
+        info!("Launching a quorum join operation");
+
+        let op = EnterQuorumOperation::initialize(node);
+
+        self.launch_operation(OperationObj::QuorumJoinOp(op))
+    }
+
+    // function to launch a quorum obtain info operation
+    pub fn launch_quorum_obtain_info_op(&mut self, node: &InternalNode) -> Result<()> {
+
+        // Check if we are able to execute this operation
+        ObtainQuorumInfoOP::can_execute(node)?;
+
+        let quorum = node.observer().current_view();
+
+        let threshold = get_quorum_for_f(quorum.f());
+
+        let quorum_members = quorum.quorum_members().clone();
+
+        let op = ObtainQuorumInfoOP::initialize(threshold, quorum_members);
+
+        self.launch_operation(OperationObj::QuorumInfoOp(op))
     }
 }
 
@@ -461,8 +562,15 @@ impl NodeType {
 
     pub fn client_communication(&self) -> &ChannelSyncTx<QuorumUpdateMessage> {
         match self {
-            NodeType::ClientNode(client_communication) => client_communication,
+            NodeType::ClientNode { quorum_comm, .. } => quorum_comm,
             _ => unreachable!("This node type does not have a client communication channel"),
+        }
+    }
+
+    pub fn current_replica_state(&self) -> &ReplicaState {
+        match self {
+            NodeType::QuorumNode { current_state, .. } => current_state,
+            _ => unreachable!("This node type does not have a replica state"),
         }
     }
 }

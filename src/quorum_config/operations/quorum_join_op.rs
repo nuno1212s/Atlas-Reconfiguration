@@ -81,9 +81,8 @@ pub enum VoteResult {
 impl EnterQuorumOperation {
     pub(super) const IS_IN_QUORUM: &'static str = "IS_IN_QUORUM";
 
-    fn initialize(node: &InternalNode) -> Self {
+    pub(crate) fn initialize(node: &InternalNode) -> Self {
         let current_view = node.observer().current_view();
-
 
         Self {
             threshold: get_quorum_for_n(current_view.quorum_members().len()),
