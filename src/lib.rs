@@ -196,6 +196,8 @@ impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
 
                         match self.node_type.handle_message(&node_wrap, header, quorum_msg)? {
                             QuorumProtocolResponse::DoneInitialSetup => {
+                                debug!("We have finished the initial setup of the quorum protocol, switching to stable");
+
                                 self.switch_state(ReconfigurableNodeState::Stable);
                             }
                             QuorumProtocolResponse::UpdatedQuorum(_) => {}

@@ -8,6 +8,7 @@ use atlas_core::reconfiguration_protocol::QuorumReconfigurationResponse;
 use crate::message::OperationMessage;
 use crate::quorum_config::{InternalNode, QuorumView};
 use crate::quorum_config::network::QuorumConfigNetworkNode;
+use crate::quorum_config::operations::notify_stable_quorum::NotifyQuorumOperation;
 use crate::quorum_config::operations::quorum_accept_op::QuorumAcceptNodeOperation;
 use crate::quorum_config::operations::quorum_info_op::ObtainQuorumInfoOP;
 use crate::quorum_config::operations::quorum_join_op::EnterQuorumOperation;
@@ -16,12 +17,14 @@ pub(crate) mod quorum_info_op;
 pub(crate) mod quorum_join_op;
 pub(crate) mod propagate_quorum_info;
 pub(crate) mod quorum_accept_op;
+pub(crate) mod notify_stable_quorum;
 
 /// The operation object
 pub enum OperationObj {
     QuorumInfoOp(ObtainQuorumInfoOP),
     QuorumJoinOp(EnterQuorumOperation),
-    QuorumAcceptOp(QuorumAcceptNodeOperation)
+    QuorumAcceptOp(QuorumAcceptNodeOperation),
+    NotifyQuorumOp(NotifyQuorumOperation),
 }
 
 #[derive(Clone)]
@@ -34,6 +37,7 @@ pub enum OperationResponse {
     Processing,
     /// We have issued a quorum reconfiguration request and are waiting for the response
     AwaitingResponseProtocol,
+    NoLongerAwaitingResponseProtocol,
 }
 
 /// The trait that represents a possible operation on the current state of the quorum
@@ -75,6 +79,7 @@ impl OperationObj {
             OperationObj::QuorumInfoOp(_) => ObtainQuorumInfoOP::op_name(),
             OperationObj::QuorumJoinOp(_) => EnterQuorumOperation::op_name(),
             OperationObj::QuorumAcceptOp(_) => QuorumAcceptNodeOperation::op_name(),
+            OperationObj::NotifyQuorumOp(_) => NotifyQuorumOperation::op_name(),
         }
     }
 
@@ -83,6 +88,7 @@ impl OperationObj {
             OperationObj::QuorumInfoOp(_) => ObtainQuorumInfoOP::can_execute(observer),
             OperationObj::QuorumJoinOp(_) => EnterQuorumOperation::can_execute(observer),
             OperationObj::QuorumAcceptOp(_) => QuorumAcceptNodeOperation::can_execute(observer),
+            OperationObj::NotifyQuorumOp(_) => NotifyQuorumOperation::can_execute(observer),
         }
     }
 
@@ -92,6 +98,7 @@ impl OperationObj {
             OperationObj::QuorumInfoOp(op) => op.iterate(node, network),
             OperationObj::QuorumJoinOp(op) => op.iterate(node, network),
             OperationObj::QuorumAcceptOp(op) => op.iterate(node, network),
+            OperationObj::NotifyQuorumOp(op) => op.iterate(node, network),
         }
     }
 
@@ -102,6 +109,7 @@ impl OperationObj {
             OperationObj::QuorumInfoOp(op) => op.handle_received_message(node, network, header, message),
             OperationObj::QuorumJoinOp(op) => op.handle_received_message(node, network, header, message),
             OperationObj::QuorumAcceptOp(op) => op.handle_received_message(node, network, header, message),
+            OperationObj::NotifyQuorumOp(op) => op.handle_received_message(node, network, header, message),
         }
     }
 
@@ -112,6 +120,7 @@ impl OperationObj {
             OperationObj::QuorumInfoOp(op) => op.handle_quorum_response(node, network, quorum_response),
             OperationObj::QuorumJoinOp(op) => op.handle_quorum_response(node, network, quorum_response),
             OperationObj::QuorumAcceptOp(op) => op.handle_quorum_response(node, network, quorum_response),
+            OperationObj::NotifyQuorumOp(op) => op.handle_quorum_response(node, network, quorum_response),
         }
     }
 
@@ -121,6 +130,7 @@ impl OperationObj {
             OperationObj::QuorumInfoOp(op) => op.finish(observer, network),
             OperationObj::QuorumJoinOp(op) => op.finish(observer, network),
             OperationObj::QuorumAcceptOp(op) => op.finish(observer, network),
+            OperationObj::NotifyQuorumOp(op) => op.finish(observer, network),
         }
     }
 
