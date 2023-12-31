@@ -102,23 +102,16 @@ pub enum NetworkJoinRejectionReason {
     NotNecessary,
 }
 
-#[derive(Clone, Debug)]
-#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-pub struct ReconfigurationMessage {
-    seq: SeqNo,
-    message_type: ReconfigurationMessageType,
-}
-
 /// Reconfiguration message type
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-pub enum ReconfigurationMessageType {
+pub enum ReconfigurationMessage {
     // The network reconfiguration protocol messages
     NetworkReconfig(NetworkReconfigMessage),
     // Messages related to the threshold crypto protocol
     ThresholdCrypto(ThresholdMessages),
     // The messages related to the configuration of the quorum
-    QuorumConfig(QuorumJoinReconfMessages),
+    QuorumConfig(OperationMessage),
 }
 
 pub type NetworkJoinCert = (NodeId, Signature);
@@ -146,10 +139,18 @@ pub struct ThresholdDKGArgs {
     pub threshold: usize,
 }
 
+/// Network reconfiguration protocol
+#[derive(Clone, Debug)]
+#[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
+pub struct NetworkReconfigMessage {
+    seq: SeqNo,
+    message_type: NetworkReconfigMessageType,
+}
+
 /// Network reconfiguration messages (Related only to the network view)
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
-pub enum NetworkReconfigMessage {
+pub enum NetworkReconfigMessageType {
     NetworkJoinRequest(NodeTriple),
     NetworkJoinResponse(NetworkJoinResponseMessage),
     NetworkHelloRequest(NodeTriple, Vec<NetworkJoinCert>),
@@ -180,15 +181,15 @@ pub enum OrderedBCastMessage<T> {
 }
 
 /// A type to encapsulate all of the operation messages
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum OperationMessage {
     QuorumInfoOp(QuorumObtainInfoOpMessage),
-    QuorumReconfiguration(QuorumJoinReconfMessages)
+    QuorumReconfiguration(QuorumJoinReconfMessages),
 }
 
 /// Messages related to the [QuorumObtainInformationOperation]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum QuorumObtainInfoOpMessage {
     // Request information about the current quorum
@@ -198,10 +199,10 @@ pub enum QuorumObtainInfoOpMessage {
 }
 
 /// Messages to be exchanged when a node is attempting to join the quorum
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum QuorumJoinReconfMessages {
-    RequestJoinQuorum,
+    RequestJoinQuorum(QuorumView),
     // A response message by a quorum member, with the response about the request to enter
     // The quorum. With 2f + 1 of these responses, we can form a certificate
     // Which will be accepted by all correct members of the quorum
@@ -217,21 +218,21 @@ pub enum QuorumJoinReconfMessages {
 }
 
 /// The locked quorum certificate, containing all of the accepts sent by 2f+1 of the replicas
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub struct LockedQC {
     proofs: Vec<StoredMessage<QuorumAcceptResponse>>,
 }
 
 /// The committed quorum certificate, containing all of the commits sent by 2f+1 of the replicas
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub struct CommittedQC {
     proofs: Vec<StoredMessage<QuorumCommitAcceptResponse>>,
 }
 
 /// The message that will be sent to the reconfiguration module
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum QuorumJoinResponse {
     // We have been accepted into the quorum
@@ -241,7 +242,7 @@ pub enum QuorumJoinResponse {
 }
 
 /// The response to the quorum commit request
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum QuorumCommitResponse {
     Accepted(QuorumCommitAcceptResponse),
@@ -249,7 +250,7 @@ pub enum QuorumCommitResponse {
 }
 
 /// The accept response for the quorum commit request, containing the next quorum view
-#[derive(Clone, Getters)]
+#[derive(Clone, Debug, Getters)]
 #[get = "pub"]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub struct QuorumCommitAcceptResponse {
@@ -259,11 +260,12 @@ pub struct QuorumCommitAcceptResponse {
     // Adding a big layer of security
     // It also guarantees that a replica can't commit vote for any round if that
     // Round is not yet locked.
-    qc: LockedQC
+    // TODO: This should be the signature of the locked QC by the sender
+    qc: LockedQC,
 }
 
 /// The accept response for the quorum join request, containing the next quorum view
-#[derive(Clone, Getters)]
+#[derive(Clone, Debug, Getters, PartialEq, Eq)]
 #[get = "pub"]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub struct QuorumAcceptResponse {
@@ -272,22 +274,24 @@ pub struct QuorumAcceptResponse {
 }
 
 /// The rejection reason for the quorum join request
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum QuorumRejectionReason {
     NotAuthorized,
     AlreadyAccepting,
     AlreadyAPartOfQuorum,
-    SeqNoTooOld,
-    SeqNoTooAdvanced
+    ViewDoesNotMatch(QuorumView),
+    SeqNoTooOld(SeqNo, SeqNo),
+    SeqNoTooAdvanced(SeqNo, SeqNo),
+    InvalidPart(String),
 }
 
-impl ReconfigurationMessage {
-    pub fn new(seq: SeqNo, message_type: ReconfigurationMessageType) -> Self {
+impl NetworkReconfigMessage {
+    pub fn new(seq: SeqNo, message_type: NetworkReconfigMessageType) -> Self {
         Self { seq, message_type }
     }
 
-    pub fn into_inner(self) -> (SeqNo, ReconfigurationMessageType) {
+    pub fn into_inner(self) -> (SeqNo, NetworkReconfigMessageType) {
         (self.seq, self.message_type)
     }
 }
@@ -375,17 +379,17 @@ impl Serializable for ReconfData {
     }
 }
 
-impl Orderable for ReconfigurationMessage {
+impl Orderable for NetworkReconfigMessage {
     fn sequence_number(&self) -> SeqNo {
         self.seq
     }
 }
 
-impl ReconfigurationMessage {
+impl NetworkReconfigMessage {
     pub fn seq(&self) -> SeqNo {
         self.seq
     }
-    pub fn message_type(&self) -> &ReconfigurationMessageType {
+    pub fn message_type(&self) -> &NetworkReconfigMessageType {
         &self.message_type
     }
 }
@@ -466,3 +470,27 @@ impl CommittedQC {
     }
 }
 
+impl PartialEq for LockedQC {
+
+    fn eq(&self, other: &Self) -> bool {
+        std::iter::zip(self.proofs.iter(), other.proofs.iter()).all(|(msg_a, msg_b)| {
+            *msg_a.header() == *msg_b.header() && *msg_a.message() == *msg_b.message()
+        })
+    }
+}
+
+impl<T> Debug for OrderedBCastMessage<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OrderedBCastMessage::Value(_) => {
+                write!(f, "OrderedBCastMessage::Value()")
+            }
+            OrderedBCastMessage::Order(_) => {
+                write!(f, "OrderedBCastMessage::Order()")
+            }
+            OrderedBCastMessage::OrderVote(vote) => {
+                write!(f, "OrderedBCastMessage::OrderVote({:?})", vote)
+            }
+        }
+    }
+}

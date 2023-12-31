@@ -7,11 +7,11 @@ use atlas_common::node_id::NodeId;
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::reconfiguration_node::ReconfigurationNode;
 
-use crate::message::{OrderedBCastMessage, ReconfData, ReconfigurationMessageType, ThresholdDKGArgs, ThresholdMessages};
-use crate::quorum_reconfig::ordered_bcast::OrderedBroadcast;
+use crate::message::{OrderedBCastMessage, ReconfData, ReconfigurationMessage, ThresholdDKGArgs, ThresholdMessages};
+use crate::threshold_crypto::ordered_bcast::OrderedBroadcast;
 
 /// The ordered dealer parts, decided by the leader
-struct OrderedDealerParts(Vec<usize, DealerPart>);
+struct OrderedDealerParts(Vec<(usize, DealerPart)>);
 
 /// The ordered Ack messages, decided by the leader and
 /// voted for by the other nodes in the quorum
@@ -71,7 +71,7 @@ impl JoiningThresholdReplica {
 
         //TODO: Send quiet_unwrap!(node.broadcast_reconfig_message(trigger_dkg, quorum.clone().into_iter()));
 
-        let mut participating_nodes = Default::default();
+        let mut participating_nodes: BTreeMap<NodeId, usize> = Default::default();
 
         quorum.iter().enumerate().for_each(|(id, node)| {
             participating_nodes.insert(*node, id + 1);
@@ -79,14 +79,14 @@ impl JoiningThresholdReplica {
 
         let params = DKGParams::new(quorum.len(), threshold);
 
-        let participating_node_id = participating_nodes.get(&our_id);
+        let participating_node_id = participating_nodes.get(&our_id).cloned().expect("Failed to get our own transaction ID?");
 
         let (dkg, dealer) = DistributedKeyGenerator::new(params, participating_node_id)?;
 
         let ordered_bcast = OrderedBroadcast::<DealerPart>::init_ordered_bcast(our_id, our_id, threshold, quorum.clone(),
-                                                                               |bcast| ReconfigurationMessageType::ThresholdCrypto(ThresholdMessages::DkgDealer(bcast)));
+                                                                               |bcast| ReconfigurationMessage::ThresholdCrypto(ThresholdMessages::DkgDealer(bcast)));
 
-        let reconfig_msg_type = ReconfigurationMessageType::ThresholdCrypto(ThresholdMessages::DkgDealer(OrderedBCastMessage::Value(dealer)));
+        let reconfig_msg_type = ReconfigurationMessage::ThresholdCrypto(ThresholdMessages::DkgDealer(OrderedBCastMessage::Value(dealer)));
 
         //TODO: Send message
 

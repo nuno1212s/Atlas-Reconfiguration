@@ -1,33 +1,37 @@
-use std::collections::{BTreeSet, VecDeque};
-use std::future::Pending;
-use log::{error, info, warn};
+use std::collections::VecDeque;
+
+use log::{debug, error, info, warn};
 use thiserror::Error;
+
+use atlas_common::{Err, quiet_unwrap};
 use atlas_common::error::*;
-use atlas_common::node_id::NodeId;
-use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_common::quiet_unwrap;
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_core::reconfiguration_protocol::QuorumReconfigurationResponse;
+
 use crate::message::{CommittedQC, LockedQC, OperationMessage, QuorumAcceptResponse, QuorumCommitAcceptResponse, QuorumCommitResponse, QuorumJoinReconfMessages, QuorumJoinResponse};
+use crate::quorum_config::{get_quorum_for_n, InternalNode, QuorumCertPart, QuorumView};
 use crate::quorum_config::network::QuorumConfigNetworkNode;
-use crate::quorum_config::Node;
-use crate::quorum_config::operations::{Operation, OperationExecutionCandidateError, OperationResponse, OpExecID};
+use crate::quorum_config::operations::{Operation, OperationExecutionCandidateError, OperationResponse};
 use crate::quorum_config::operations::quorum_info_op::ObtainQuorumInfoOP;
-use crate::quorum_config::replica::QuorumCert;
+use crate::quorum_config::QuorumCert;
 
 /// The operation to enter the quorum
 pub struct EnterQuorumOperation {
-    // The execution ID of this operation
-    op_seq: OpExecID,
-    // The votes that we have received so far
-    received_votes: BTreeSet<NodeId>,
     // The threshold of votes we need to receive
     threshold: usize,
     // The messages that we have to analyse once we are ready to
     pending_messages: PendingMessages,
+    initial_quorum: QuorumView,
 
     // The phase of the currently executing operation
     phase: OperationPhase,
+
+    // The locked QC
+    locked_qc: Option<LockedQC>,
+    // The commit QC
+    commit_qc: Option<CommittedQC>,
+    // The quorum after we have entered
+    new_quorum: Option<QuorumView>,
 }
 
 /// The phase of the leader in the quorum reconfiguration protocol
@@ -48,7 +52,7 @@ pub enum OperationPhase {
     // Newest quorum, preventing them from accepting any new requests
     // A lock can be broken in two ways: Either by timing out a given request
     // Or by receiving a lockedQC with 2f+1 members corresponding to the same sequence number
-    LockingQC(Vec<StoredMessage<QuorumAcceptResponse>>),
+    LockingQC(Vec<StoredMessage<QuorumAcceptResponse>>, usize),
     // After a correct replica receives a correct lockedQC, it will commit that QC
     // And send it's commit confirmation to the leader (us).
     // When we have 2f+1 of these commit confirmations, we can move to the next and
@@ -58,7 +62,7 @@ pub enum OperationPhase {
     // Any replica in a SeqNo < SeqNo(commitQC) even if it has not locked the quorum previously,
     // Should commit and move to this new quorum as it has received proof that the rest of the
     // Quorum has already done so
-    CommittingQC(Vec<StoredMessage<QuorumCommitAcceptResponse>>),
+    CommittingQC(Vec<StoredMessage<QuorumCommitAcceptResponse>>, usize),
 
     Done,
 }
@@ -69,26 +73,150 @@ struct PendingMessages {
     pending_commit_message: VecDeque<StoredMessage<QuorumJoinReconfMessages>>,
 }
 
-impl Orderable for EnterQuorumOperation {
-    fn sequence_number(&self) -> SeqNo {
-        self.op_seq
-    }
+pub enum VoteResult {
+    Processing,
+    RejectionsMet,
 }
 
 impl EnterQuorumOperation {
+    pub(super) const IS_IN_QUORUM: &'static str = "IS_IN_QUORUM";
+
+    fn initialize(node: &InternalNode) -> Self {
+        let current_view = node.observer().current_view();
+
+
+        Self {
+            threshold: get_quorum_for_n(current_view.quorum_members().len()),
+            initial_quorum: current_view,
+            pending_messages: Default::default(),
+            phase: OperationPhase::Waiting,
+            locked_qc: None,
+            commit_qc: None,
+            new_quorum: None,
+        }
+    }
+
     fn unwrap_operation_message(message: OperationMessage) -> QuorumJoinReconfMessages {
         match message {
             OperationMessage::QuorumReconfiguration(message) => message,
             _ => unreachable!("Received non quorum join reconf message in enter quorum operation")
         }
     }
+
+    pub fn handle_locked_vote_received<NT>(&mut self, node: &mut InternalNode, network: &NT, header: Header, vote: QuorumJoinResponse) -> Result<OperationResponse>
+        where NT: QuorumConfigNetworkNode + 'static {
+        match &mut self.phase {
+            OperationPhase::Waiting => {
+                error!("Received locked vote while we are still in waiting phase (have not yet contacted anyone). This should not be possible.");
+            }
+            OperationPhase::LockingQC(received_votes, rejects) => {
+                match vote {
+                    QuorumJoinResponse::Accepted(accept_vote) => {
+
+                        //TODO: assure this vote matches the votes we are expecting
+                        received_votes.push(StoredMessage::new(header, accept_vote));
+
+                        if received_votes.len() >= self.threshold {
+                            info!("Received enough locked votes, moving to commit phase and broadcasting the locked QC");
+
+                            let phase = std::mem::replace(&mut self.phase, OperationPhase::CommittingQC(Default::default(), 0));
+
+                            let locked_qc = LockedQC::new(phase.unwrap_locked_qc());
+
+                            self.locked_qc = Some(locked_qc.clone());
+
+                            let op_message_type = OperationMessage::QuorumReconfiguration(QuorumJoinReconfMessages::CommitQuorum(locked_qc));
+
+                            let _ = network.broadcast_quorum_message(op_message_type,
+                                self.initial_quorum.quorum_members().clone().into_iter());
+                        }
+                    }
+                    QuorumJoinResponse::Rejected(rejection_reason) => {
+                        warn!("Received rejection vote from {:?} with reason: {:?}", header.from(), rejection_reason);
+
+                        *rejects += 1;
+                    }
+                }
+            }
+            OperationPhase::CommittingQC(_, _) => {
+                debug!("Received locked vote while we are in commit phase. Ignoring message. From: {:?}", header.from());
+            }
+            OperationPhase::Done => {
+                debug!("Received locked vote while we are done with the protocol. Ignoring message. From: {:?}", header.from());
+            }
+        }
+
+        Ok(OperationResponse::Processing)
+    }
+
+    pub fn handle_commit_vote_received<NT>(&mut self, node: &mut InternalNode, network: &NT, header: Header, vote: QuorumCommitResponse) -> Result<OperationResponse>
+        where NT: QuorumConfigNetworkNode + 'static {
+        match &mut self.phase {
+            OperationPhase::Waiting => {
+                error!("Received locked vote while we are still in waiting phase (have not yet contacted anyone). This should not be possible.");
+            }
+            OperationPhase::LockingQC(_, _) => {
+                info!("Received commit vote while we are in locking phase. Pushing message into pending queue. From: {:?}", header.from());
+
+                self.pending_messages.push_pending_message(StoredMessage::new(header, QuorumJoinReconfMessages::CommitQuorumResponse(vote)));
+            }
+            OperationPhase::CommittingQC(accepts, rejections) => {
+                match vote {
+                    QuorumCommitResponse::Accepted(accept_vote) => {
+                        let locked_qc = self.locked_qc.as_ref().expect("We should have a locked QC at this point");
+
+                        if *locked_qc != *accept_vote.qc() {
+                            error!("Received commit vote with different QC than the one we locked. This should not be possible.");
+
+                            return Err!(JoinExecErr::LockedQCDoesNotMatchOurs);
+                        } else if *locked_qc.quorum() != *accept_vote.view() {
+                            error!("Received commit vote with different quorum than the one we locked. This should not be possible.");
+
+                            return Err!(JoinExecErr::ViewDoesNotMatchOurs);
+                        } else {
+                            accepts.push(StoredMessage::new(header, accept_vote));
+                        }
+
+                        if accepts.len() >= self.threshold {
+                            info!("Received enough commit votes, moving to done phase and broadcasting the commit QC");
+
+                            let phase = std::mem::replace(&mut self.phase, OperationPhase::Done);
+
+                            let commit_qc = CommittedQC::new(phase.unwrap_commit_qc());
+
+                            self.commit_qc = Some(commit_qc.clone());
+                            self.new_quorum = Some(commit_qc.quorum().clone());
+
+                            let op_message_type = OperationMessage::QuorumReconfiguration(QuorumJoinReconfMessages::Decided(commit_qc));
+
+                            let _ =  network.broadcast_quorum_message(op_message_type,
+                                self.initial_quorum.quorum_members().clone().into_iter());
+
+                            return Ok(OperationResponse::Completed);
+                        }
+                    }
+                    QuorumCommitResponse::Rejected(reject_reason) => {
+                        warn!("Received rejection vote from {:?} with reason: {:?}", header.from(), reject_reason);
+
+                        *rejections += 1;
+                    }
+                }
+            }
+            OperationPhase::Done => {}
+        }
+
+        Ok(OperationResponse::Processing)
+    }
 }
 
 impl Operation for EnterQuorumOperation {
     const OP_NAME: &'static str = "ENTER_QUORUM";
 
-    fn can_execute(observer: &Node) -> std::result::Result<(), OperationExecutionCandidateError> {
-        let last_execution = observer.data().get(ObtainQuorumInfoOP::OP_NAME, ObtainQuorumInfoOP::LAST_EXEC);
+    fn can_execute(observer: &InternalNode) -> std::result::Result<(), OperationExecutionCandidateError> {
+        // In order to join, we must first obtain the quorum information
+        // TODO: Maybe also add a minimum time since last execution?
+
+        let last_execution: Option<&u128> = observer.data().get(ObtainQuorumInfoOP::OP_NAME, ObtainQuorumInfoOP::LAST_EXEC);
 
         if let None = last_execution {
             return Err(OperationExecutionCandidateError::RequirementsNotMet(format!("{}", JoinExecErr::QuorumInformationMustBeObtained)));
@@ -97,107 +225,75 @@ impl Operation for EnterQuorumOperation {
         Ok(())
     }
 
-    fn op_exec_id(&self) -> OpExecID {
-        self.op_seq
-    }
-
-    fn iterate<NT>(&mut self, node: &mut Node, network: &NT) -> Result<OperationResponse>
+    fn iterate<NT>(&mut self, node: &mut InternalNode, network: &NT) -> Result<OperationResponse>
         where NT: QuorumConfigNetworkNode + 'static {
         if let OperationPhase::Waiting = &self.phase {
             let current_view = node.observer.current_view();
 
             info!("Broadcasting enter quorum request to known quorum: {:?}", current_view);
 
-            self.phase = OperationPhase::CommittingQC(Default::default());
+            self.phase = OperationPhase::CommittingQC(Default::default(), 0);
 
-            network.broadcast_quorum_message(self.sequence_number().next(), QuorumJoinReconfMessages::RequestJoinQuorum,
-                                             current_view.quorum_members().clone().into_iter())?;
+            let quorum_join = QuorumJoinReconfMessages::RequestJoinQuorum(current_view.clone());
+
+            let message_type = OperationMessage::QuorumReconfiguration(quorum_join);
+
+            let _ = network.broadcast_quorum_message(message_type, current_view.quorum_members().clone().into_iter());
+        } else if let OperationPhase::CommittingQC(_, _) = &self.phase {
+            if self.pending_messages.has_pending_messages() {
+                let message = self.pending_messages.pop_pending_message().unwrap();
+
+                let (header, message) = message.into_inner();
+
+                return self.handle_received_message(node, network, header, OperationMessage::QuorumReconfiguration(message));
+            }
         }
 
         Ok(OperationResponse::Processing)
     }
 
-    fn handle_received_message<NT>(&mut self, node: &mut Node, network: &NT, header: Header, seq_no: SeqNo, message: OperationMessage) -> Result<OperationResponse>
+    fn handle_received_message<NT>(&mut self, node: &mut InternalNode, network: &NT, header: Header, message: OperationMessage) -> Result<OperationResponse>
         where NT: QuorumConfigNetworkNode + 'static {
-
         let message = Self::unwrap_operation_message(message);
 
-        let current_view = node.observer.current_view();
 
-        match &mut self.phase {
-            OperationPhase::Waiting => {}
-            OperationPhase::LockingQC(received_approvals) => {
-                match message {
-                    QuorumJoinReconfMessages::RequestJoinQuorum => {}
-                    QuorumJoinReconfMessages::LockedQuorumResponse(lock_vote) => {
-                        match lock_vote {
-                            QuorumJoinResponse::Accepted(vote) => {
-                                received_approvals.push(StoredMessage::new(header, vote));
-                            }
-                            QuorumJoinResponse::Rejected(_) => {
-                                todo!("Handle rejection of join request")
-                            }
-                        }
-                    }
-                    _ => self.pending_messages.push_pending_message(StoredMessage::new(header, message))
-                }
+        let msg_result = match message {
+            QuorumJoinReconfMessages::RequestJoinQuorum(_) => {
+                error!("Received request join quorum message while we are the ones requesting information. Ignoring.");
 
-                if received_approvals.len() >= self.threshold {
-                    let phase = std::mem::replace(&mut self.phase, OperationPhase::CommittingQC(Default::default()));
-
-                    let locked_qc = phase.unwrap_locked_qc();
-
-                    let qc = LockedQC::new(locked_qc);
-
-                    quiet_unwrap!(network.broadcast_quorum_message(self.sequence_number(), QuorumJoinReconfMessages::CommitQuorum(qc),
-                        current_view.quorum_members().clone().into_iter()));
-                }
+                return Ok(OperationResponse::Processing);
             }
-            OperationPhase::CommittingQC(received_commit_votes) => {
-                match message {
-                    QuorumJoinReconfMessages::CommitQuorumResponse(commit_vote) => {
-                        match commit_vote {
-                            QuorumCommitResponse::Accepted(vote) => {
-                                received_commit_votes.push(StoredMessage::new(header, vote));
-                            }
-                            QuorumCommitResponse::Rejected(_) => {
-                                todo!("Handle rejection of commit request")
-                            }
-                        }
-                    }
-                    _ => self.pending_messages.pending_commit_message(StoredMessage::new(header, message))
-                }
-
-                if received_commit_votes.len() >= self.threshold {
-                    let phase = std::mem::replace(&mut self.phase, OperationPhase::Done);
-
-                    let commit_qc = phase.unwrap_commit_qc();
-
-                    let commit_qc = CommittedQC::new(commit_qc);
-
-                    let quorum = commit_qc.quorum().clone();
-
-                    quiet_unwrap!(node.broadcast_quorum_message(self.sequence_number(), QuorumJoinReconfMessages::Decided(commit_qc),
-                        current_view.quorum_members().clone().into_iter()));
-
-                    return Ok(crate::quorum_config::replica::enter_quorum::EnterQuorumOperationResponse::EnterQuorum(quorum));
-                }
+            QuorumJoinReconfMessages::LockedQuorumResponse(vote) => {
+                self.handle_locked_vote_received(node, network, header, vote)
             }
-            OperationPhase::Done => {
-                warn!("Received message while we are done with the protocol");
-            }
-        }
+            QuorumJoinReconfMessages::CommitQuorum(_) => {
+                error!("Received commit quorum message while we are the ones requesting information. Ignoring.");
 
-        Ok(OperationResponse::Processing)
+                return Ok(OperationResponse::Processing);
+            }
+            QuorumJoinReconfMessages::CommitQuorumResponse(vote) => {
+                self.handle_commit_vote_received(node, network, header, vote)
+            }
+            QuorumJoinReconfMessages::Decided(_) => {
+                error!("Received decided message while we are the ones requesting information. Ignoring.");
+
+                return Ok(OperationResponse::Processing);
+            }
+        };
+
+        msg_result
     }
 
-    fn handle_quorum_response<NT>(&mut self, node: &mut Node, network: &NT, quorum_response: QuorumReconfigurationResponse) -> Result<OperationResponse>
+    fn handle_quorum_response<NT>(&mut self, node: &mut InternalNode, network: &NT, quorum_response: QuorumReconfigurationResponse) -> Result<OperationResponse>
         where NT: QuorumConfigNetworkNode + 'static {
         todo!()
     }
 
-    fn finish<NT>(&mut self, observer: &mut Node, network: &NT) -> Result<()> where NT: QuorumConfigNetworkNode + 'static {
-        todo!()
+    fn finish<NT>(mut self, observer: &mut InternalNode, network: &NT) -> Result<()>
+        where NT: QuorumConfigNetworkNode + 'static {
+        observer.observer().install_quorum_view(self.new_quorum.take().unwrap());
+
+        Ok(())
     }
 }
 
@@ -206,6 +302,14 @@ impl PendingMessages {
         Self {
             pending_commit_message: Default::default(),
         }
+    }
+
+    pub fn has_pending_messages(&self) -> bool {
+        !self.pending_commit_message.is_empty()
+    }
+
+    pub fn pop_pending_message(&mut self) -> Option<StoredMessage<QuorumJoinReconfMessages>> {
+        self.pending_commit_message.pop_front()
     }
 
     pub fn push_pending_message(&mut self, message: StoredMessage<QuorumJoinReconfMessages>) {
@@ -226,8 +330,34 @@ impl Default for PendingMessages {
     }
 }
 
+impl OperationPhase {
+    pub fn unwrap_locked_qc(self) -> Vec<StoredMessage<QuorumAcceptResponse>> {
+        match self {
+            OperationPhase::LockingQC(locked_qc, _) => {
+                locked_qc
+            }
+            _ => unreachable!("Called unwrap_locked_qc on a phase that is not locking qc")
+        }
+    }
+
+    pub fn unwrap_commit_qc(self) -> Vec<StoredMessage<QuorumCommitAcceptResponse>> {
+        match self {
+            OperationPhase::CommittingQC(commit_qc, _) => {
+                commit_qc
+            }
+            _ => unreachable!("Called unwrap_commit_qc on a phase that is not committing qc")
+        }
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum JoinExecErr {
     #[error("The Obtain quorum information operation is required for this operation to execute")]
     QuorumInformationMustBeObtained,
+    #[error("Too many rejects have been received by this operation, making it unfeasible")]
+    ReceivedTooManyRejects,
+    #[error("The locked QC received in the vote does not match the locked qc we have broadcast")]
+    LockedQCDoesNotMatchOurs,
+    #[error("The view in the vote does not match our expected view")]
+    ViewDoesNotMatchOurs,
 }

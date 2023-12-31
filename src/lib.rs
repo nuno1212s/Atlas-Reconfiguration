@@ -1,4 +1,6 @@
 #![feature(async_fn_in_trait)]
+#![feature(extract_if)]
+#![feature(btree_extract_if)]
 
 extern crate core;
 
@@ -13,16 +15,17 @@ use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
-use atlas_common::ordering::SeqNo;
+use atlas_common::ordering::{Orderable, SeqNo};
+use atlas_communication::message::Header;
 use atlas_communication::NodeConnections;
 use atlas_communication::reconfiguration_node::{ReconfigurationIncomingHandler, ReconfigurationNode};
 use atlas_core::reconfiguration_protocol::{QuorumJoinCert, ReconfigResponse, ReconfigurableNodeTypes, ReconfigurationProtocol};
 use atlas_core::timeouts::{RqTimeout, TimeoutKind, Timeouts};
 
 use crate::config::ReconfigurableNetworkConfig;
-use crate::message::{ReconfData, ReconfigMessage, ReconfigurationMessageType};
+use crate::message::{ReconfData, ReconfigMessage, ReconfigurationMessage};
 use crate::network_reconfig::{GeneralNodeInfo, NetworkInfo, NetworkNodeState};
-use crate::quorum_config::{QuorumNode, QuorumObserver, QuorumView};
+use crate::quorum_config::{Node,  QuorumObserver, QuorumView};
 use crate::quorum_config::network::QuorumConfigNetworkWrapper;
 
 pub mod config;
@@ -56,7 +59,7 @@ pub enum NetworkProtocolResponse {
 
 /// The response returned from iterating the quorum protocol
 pub enum QuorumProtocolResponse {
-    Done,
+    DoneInitialSetup,
     UpdatedQuorum(QuorumView),
     Nil,
 }
@@ -76,7 +79,7 @@ pub struct ReconfigurableNode<NT> where NT: Send + 'static {
     // Receive messages from the other protocols
     channel_rx: ChannelSyncRx<ReconfigMessage>,
     /// The type of the node we are running.
-    node_type: QuorumNode,
+    node_type: Node,
 }
 
 #[derive(Debug)]
@@ -130,7 +133,7 @@ impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
         self.node_state = new_state;
     }
 
-    fn run(mut self) where NT: ReconfigurationNode<ReconfData> + 'static {
+    fn run(&mut self) -> Result<()> where NT: ReconfigurationNode<ReconfData> + 'static {
         loop {
             self.handle_local_messages();
 
@@ -146,10 +149,10 @@ impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
                     };
                 }
                 ReconfigurableNodeState::QuorumReconfigurationProtocol => {
-                    let node_wrap = Arc::new(QuorumConfigNetworkWrapper::from(self.network_node.clone()));
+                    let node_wrap = QuorumConfigNetworkWrapper::from(self.network_node.clone());
 
-                    match self.node_type.iterate(node_wrap)? {
-                        QuorumProtocolResponse::Done => {
+                    match self.node_type.iterate(&node_wrap)? {
+                        QuorumProtocolResponse::DoneInitialSetup => {
                             self.switch_state(ReconfigurableNodeState::Stable);
                         }
                         QuorumProtocolResponse::UpdatedQuorum(_) => {}
@@ -157,11 +160,11 @@ impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
                     }
                 }
                 ReconfigurableNodeState::Stable => {
-                    let node_wrap = Arc::new(QuorumConfigNetworkWrapper::from(self.network_node.clone()));
+                    let node_wrap = QuorumConfigNetworkWrapper::from(self.network_node.clone());
 
                     // We still want to iterate the quorum protocol in order to receive new updates from the ordering protocol
                     // The network reconfiguration protocol is now only request based, so it does not need to be iterated
-                    match self.node_type.iterate(node_wrap)? {
+                    match self.node_type.iterate(&node_wrap)? {
                         _ => {}
                     }
                 }
@@ -170,37 +173,36 @@ impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
             let optional_message = self.network_node.reconfiguration_message_handler().try_receive_reconfig_message(Some(Duration::from_millis(1000))).unwrap();
 
             if let Some(message) = optional_message {
-                let (header, message) = message.into_inner();
-
-                let (seq, message) = message.into_inner();
+                let (header, message) : (Header, ReconfigurationMessage) = message.into_inner();
 
                 match message {
-                    ReconfigurationMessageType::NetworkReconfig(network_reconfig) => {
-                        if self.node.is_response_to_request(&self.seq_gen, &header, seq, &network_reconfig) {
-                            self.timeouts.received_reconfig_request(header.from(), seq);
+                    ReconfigurationMessage::NetworkReconfig(network_reconfig) => {
+                        if self.node.is_response_to_request(&self.seq_gen, &header, network_reconfig.sequence_number(), network_reconfig.message_type()) {
+                            self.timeouts.received_reconfig_request(header.from(), network_reconfig.sequence_number());
                         }
 
-                        match self.node.handle_network_reconfig_msg(&mut self.seq_gen, &self.network_node, &self.timeouts, header, seq, network_reconfig) {
+                        match self.node.handle_network_reconfig_msg(&mut self.seq_gen, &self.network_node, &self.timeouts, header, network_reconfig) {
                             NetworkProtocolResponse::Done => {
                                 self.switch_state(ReconfigurableNodeState::QuorumReconfigurationProtocol);
                             }
                             NetworkProtocolResponse::Nil => {}
                         };
                     }
-                    ReconfigurationMessageType::QuorumConfig(quorum_msg) => {
+                    ReconfigurationMessage::QuorumConfig(quorum_msg) => {
 
                         //TODO: Handle timeouts
 
-                        let node_wrap = Arc::new(QuorumConfigNetworkWrapper::from(self.network_node.clone()));
+                        let node_wrap = QuorumConfigNetworkWrapper::from(self.network_node.clone());
 
-                        match self.node_type.handle_message(&node_wrap, header, seq, quorum_msg)? {
-                            QuorumProtocolResponse::Done => {
+                        match self.node_type.handle_message(&node_wrap, header, quorum_msg)? {
+                            QuorumProtocolResponse::DoneInitialSetup => {
                                 self.switch_state(ReconfigurableNodeState::Stable);
                             }
                             QuorumProtocolResponse::UpdatedQuorum(_) => {}
                             QuorumProtocolResponse::Nil => {}
                         }
                     }
+                    ReconfigurationMessage::ThresholdCrypto(_) => {}
                 }
             }
         }
@@ -227,7 +229,9 @@ impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
                                         self.node.handle_timeout(&mut self.seq_gen, &self.network_node, &self.timeouts);
                                     }
                                     ReconfigurableNodeState::QuorumReconfigurationProtocol => {
-                                        self.node_type.handle_timeout(&mut self.seq_gen, &self.node, &self.network_node, &self.timeouts);
+                                        let nt_wrap = QuorumConfigNetworkWrapper::from(self.network_node.clone());
+
+                                        self.node_type.handle_timeout(&nt_wrap, &self.timeouts);
                                     }
                                     ReconfigurableNodeState::Stable => {
                                         error!("Received a reconfiguration timeout while we are stable, this does not make sense");
@@ -261,25 +265,35 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocolHandle {
                                      -> Result<Self> where NT: ReconfigurationNode<Self::Serialization> + 'static, Self: Sized {
         let general_info = GeneralNodeInfo::new(information.clone(), NetworkNodeState::Init);
 
-        let (node_type, quorum_view) = QuorumNode::initialize(information.bootstrap_nodes().clone(), node_type);
+        let quorum_view = Node::init_observer(information.bootstrap_nodes().clone());
+
+        let our_id = information.node_id();
 
         let (channel_tx, channel_rx) = channel::new_bounded_sync(128,
                                                                  Some("Reconfiguration message channel"));
 
-        let reconfigurable_node = ReconfigurableNode {
-            seq_gen: SeqNoGen { seq: SeqNo::ZERO },
-            node_state: ReconfigurableNodeState::NetworkReconfigurationProtocol,
-            node: general_info,
-            network_node: node.clone(),
-            timeouts,
-            channel_rx,
-            node_type,
-        };
+        let cpy_obs = quorum_view.clone();
 
         std::thread::Builder::new()
             .name(format!("Reconfiguration Protocol Thread"))
             .spawn(move || {
-                reconfigurable_node.run();
+                let node_type= Node::initialize_with_observer(our_id, cpy_obs, node_type);
+
+                let mut reconfigurable_node = ReconfigurableNode {
+                    seq_gen: SeqNoGen { seq: SeqNo::ZERO },
+                    node_state: ReconfigurableNodeState::NetworkReconfigurationProtocol,
+                    node: general_info,
+                    network_node: node.clone(),
+                    timeouts,
+                    channel_rx,
+                    node_type,
+                };
+
+                loop {
+                    if let Err(err) = reconfigurable_node.run() {
+                        error!("Error while running the reconfiguration protocol: {:?}", err);
+                    }
+                }
             }).expect("Failed to launch reconfiguration protocol thread");
 
         let node_handle = ReconfigurableNodeProtocolHandle {
@@ -298,15 +312,17 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocolHandle {
     }
 
     fn get_quorum_members(&self) -> Vec<NodeId> {
-        self.quorum_info.quorum_members()
+        self.quorum_info.current_view().quorum_members().clone()
     }
 
     fn get_current_f(&self) -> usize {
-        self.quorum_info.current_f()
+        self.quorum_info.current_view().f()
     }
 
     fn quorum_state(&self) -> (Vec<NodeId>, usize) {
-        self.quorum_info.current_quorum_view()
+        let view = self.quorum_info.current_view();
+
+        (view.quorum_members().clone(), view.f())
     }
 
     fn is_join_certificate_valid(&self, certificate: &QuorumJoinCert<Self::Serialization>) -> bool {

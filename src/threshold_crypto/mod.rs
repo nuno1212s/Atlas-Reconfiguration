@@ -36,14 +36,14 @@ impl ThresholdCrypto {
     pub fn from_finished_dkg(our_id: NodeId, quorum: Vec<NodeId>, dkg: DistributedKeyGenerator) -> Self {
         let our_index = dkg.our_id();
 
-        let (pk_set, sk_part) = dkg.finish();
+        let (pk_set, sk_part) = dkg.finalize().expect("Failed to finalize DKG");
 
         Self {
             our_id,
             our_index,
             current_quorum: quorum,
-            pk_set,
-            sk_part,
+            pk_set: pk_set.into(),
+            sk_part: sk_part.into(),
         }
     }
 

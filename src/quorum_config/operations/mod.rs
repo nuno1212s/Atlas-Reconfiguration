@@ -1,17 +1,30 @@
 use thiserror::Error;
-use atlas_common::ordering::{Orderable, SeqNo};
+
 use atlas_common::error::*;
+use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::Header;
 use atlas_core::reconfiguration_protocol::QuorumReconfigurationResponse;
-use crate::message::{OperationMessage, QuorumJoinReconfMessages};
-use crate::quorum_config::{Node, QuorumObserver};
+
+use crate::message::OperationMessage;
+use crate::quorum_config::{InternalNode, QuorumView};
 use crate::quorum_config::network::QuorumConfigNetworkNode;
+use crate::quorum_config::operations::quorum_accept_op::QuorumAcceptNodeOperation;
+use crate::quorum_config::operations::quorum_info_op::ObtainQuorumInfoOP;
+use crate::quorum_config::operations::quorum_join_op::EnterQuorumOperation;
 
-pub mod quorum_info_op;
-pub mod quorum_join_op;
-mod propagate_quorum_info;
-mod quorum_accept_op;
+pub(crate) mod quorum_info_op;
+pub(crate) mod quorum_join_op;
+pub(crate) mod propagate_quorum_info;
+pub(crate) mod quorum_accept_op;
 
+/// The operation object
+pub enum OperationObj {
+    QuorumInfoOp(ObtainQuorumInfoOP),
+    QuorumJoinOp(EnterQuorumOperation),
+    QuorumAcceptOp(QuorumAcceptNodeOperation)
+}
+
+#[derive(Clone)]
 /// The various responses the operation can return
 pub enum OperationResponse {
     /// The operation has been completed, and the replica can move on to the next one
@@ -22,43 +35,86 @@ pub enum OperationResponse {
     AwaitingResponseProtocol,
 }
 
-pub type OpExecID = SeqNo;
-
 /// The trait that represents a possible operation on the current state of the quorum
-pub trait Operation: Orderable {
+pub trait Operation {
 
-    // The associated name of the operation
     const OP_NAME: &'static str;
 
-    /// The name of this operation
-    fn op_name() -> &'static str {
-        return Self::OP_NAME;
+     fn op_name() -> &'static str where Self: Sized  {
+        Self::OP_NAME
     }
 
     /// Can a given node execute this type of operation
-    fn can_execute(observer: &Node) -> std::result::Result<(), OperationExecutionCandidateError>;
-
-    /// The ID of the execution instance of this operation
-    fn op_exec_id(&self) -> OpExecID;
+    fn can_execute(observer: &InternalNode) -> std::result::Result<(), OperationExecutionCandidateError> where Self: Sized;
 
     /// We want to iterate through this operation (for example to launch the initial requests,
     /// perform re requests on timeouts, etc)
-    fn iterate<NT>(&mut self, node: &mut Node, network: &NT) -> Result<OperationResponse>
+    fn iterate<NT>(&mut self, node: &mut InternalNode, network: &NT) -> Result<OperationResponse>
         where NT: QuorumConfigNetworkNode + 'static;
 
     /// Handle a message that we have received from another node in the context of this operation
-    fn handle_received_message<NT>(&mut self, node: &mut Node, network: &NT, header: Header,
-                                   seq_no: SeqNo, message: OperationMessage) -> Result<OperationResponse>
+    fn handle_received_message<NT>(&mut self, node: &mut InternalNode, network: &NT, header: Header,
+                                   message: OperationMessage) -> Result<OperationResponse>
         where NT: QuorumConfigNetworkNode + 'static;
 
     /// Handle the response of a quorum reconfiguration request sent by this operation
-    fn handle_quorum_response<NT>(&mut self, node: &mut Node, network: &NT,
+    fn handle_quorum_response<NT>(&mut self, node: &mut InternalNode, network: &NT,
                                   quorum_response: QuorumReconfigurationResponse) -> Result<OperationResponse>
         where NT: QuorumConfigNetworkNode + 'static;
 
     /// Finish an operation by passing it the node so it can perform the necessary changes
-    fn finish<NT>(&mut self, observer: &mut Node, network: &NT) -> Result<()>
+    fn finish<NT>(self, observer: &mut InternalNode, network: &NT) -> Result<()>
         where NT: QuorumConfigNetworkNode + 'static;
+}
+
+impl OperationObj {
+
+    pub fn op_name(&self) -> &'static str {
+        match self {
+            OperationObj::QuorumInfoOp(_) => ObtainQuorumInfoOP::op_name(),
+            OperationObj::QuorumJoinOp(_) => EnterQuorumOperation::op_name(),
+            OperationObj::QuorumAcceptOp(_) => QuorumAcceptNodeOperation::op_name(),
+        }
+    }
+
+    pub fn iterate<NT>(&mut self, node: &mut InternalNode, network: &NT) -> Result<OperationResponse>
+        where NT: QuorumConfigNetworkNode + 'static {
+        match self {
+            OperationObj::QuorumInfoOp(op) => op.iterate(node, network),
+            OperationObj::QuorumJoinOp(op) => op.iterate(node, network),
+            OperationObj::QuorumAcceptOp(op) => op.iterate(node, network),
+        }
+    }
+
+    pub fn handle_received_message<NT>(&mut self, node: &mut InternalNode, network: &NT, header: Header,
+                                       message: OperationMessage) -> Result<OperationResponse>
+        where NT: QuorumConfigNetworkNode + 'static {
+        match self {
+            OperationObj::QuorumInfoOp(op) => op.handle_received_message(node, network, header, message),
+            OperationObj::QuorumJoinOp(op) => op.handle_received_message(node, network, header, message),
+            OperationObj::QuorumAcceptOp(op) => op.handle_received_message(node, network, header, message),
+        }
+    }
+
+    pub fn handle_quorum_response<NT>(&mut self, node: &mut InternalNode, network: &NT,
+                                      quorum_response: QuorumReconfigurationResponse) -> Result<OperationResponse>
+        where NT: QuorumConfigNetworkNode + 'static {
+        match self {
+            OperationObj::QuorumInfoOp(op) => op.handle_quorum_response(node, network, quorum_response),
+            OperationObj::QuorumJoinOp(op) => op.handle_quorum_response(node, network, quorum_response),
+            OperationObj::QuorumAcceptOp(op) => op.handle_quorum_response(node, network, quorum_response),
+        }
+    }
+
+    pub fn finish<NT>(self, observer: &mut InternalNode, network: &NT) -> Result<()>
+        where NT: QuorumConfigNetworkNode + 'static {
+        match self {
+            OperationObj::QuorumInfoOp(op) => op.finish(observer, network),
+            OperationObj::QuorumJoinOp(op) => op.finish(observer, network),
+            OperationObj::QuorumAcceptOp(op) => op.finish(observer, network),
+        }
+    }
+
 }
 
 /// Errors that describe why a given quorum observer cannot execute a given operation
@@ -70,5 +126,5 @@ pub enum OperationExecutionCandidateError {
     ConflictingOperations,
     #[error("The requirements for this operation are not met {0}")]
     RequirementsNotMet(String),
-    
+
 }
