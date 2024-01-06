@@ -324,6 +324,16 @@ impl OnGoingOperations {
 
                                 self.launch_quorum_join_op(node)?;
                             }
+                        } else if let ReplicaState::Joining = current_state {
+                            if is_part_of_quorum {
+                                info!("We have joined the quorum, calling initial setup done");
+
+                                *current_state = ReplicaState::Member;
+
+                                self.launch_quorum_notify_op(node)?;
+
+                                return Ok(QuorumProtocolResponse::DoneInitialSetup);
+                            }
                         }
                     }
                 }
@@ -466,6 +476,8 @@ impl OnGoingOperations {
                         return Ok(QuorumProtocolResponse::Nil);
                     }
                     NodeType::QuorumNode { current_state, .. } => {
+                        info!("Received a quorum reconfiguration message: {:?} from {:?}", reconf_message, header.from());
+
                         if self.has_operation_of_type(QuorumAcceptNodeOperation::OP_NAME) {
                             let operation = self.get_mut_operation_of_type(QuorumAcceptNodeOperation::OP_NAME).unwrap();
 
@@ -476,12 +488,19 @@ impl OnGoingOperations {
 
                             response = operation.handle_received_message(node, network, header, message)?;
                             op_name = operation.op_name();
+
                         } else {
                             match reconf_message {
                                 QuorumJoinReconfMessages::RequestJoinQuorum(_) => {
                                     match current_state {
                                         ReplicaState::Member => {
-                                            self.launch_operation(OperationObj::QuorumAcceptOp(QuorumAcceptNodeOperation::initialize(header.from())))?;
+                                            info!("Received a request to join the quorum while we do not have any ongoing accept operations, launching an accept operation");
+
+                                            let node_accept = QuorumAcceptNodeOperation::initialize(header.from());
+
+                                            self.launch_operation(OperationObj::QuorumAcceptOp(node_accept))?;
+
+                                            return self.handle_message(node, network, header, message);
                                         }
                                         _ => {
                                             warn!("Received a request to join the quorum, but we are not a member of the quorum");

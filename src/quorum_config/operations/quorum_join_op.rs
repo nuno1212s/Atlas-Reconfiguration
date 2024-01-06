@@ -128,6 +128,8 @@ impl EnterQuorumOperation {
 
                             let _ = network.broadcast_quorum_message(op_message_type,
                                 self.initial_quorum.quorum_members().clone().into_iter());
+                        } else {
+                            info!("Received locked vote, but not enough to move to commit phase. Waiting for more votes.");
                         }
                     }
                     QuorumJoinResponse::Rejected(rejection_reason) => {
@@ -187,7 +189,7 @@ impl EnterQuorumOperation {
                             self.new_quorum = Some(commit_qc.quorum().clone());
 
                             let op_message_type = OperationMessage::QuorumReconfiguration(QuorumJoinReconfMessages::Decided(commit_qc));
-
+                            
                             let _ =  network.broadcast_quorum_message(op_message_type,
                                 self.initial_quorum.quorum_members().clone().into_iter());
 
@@ -231,7 +233,7 @@ impl Operation for EnterQuorumOperation {
 
             info!("Broadcasting enter quorum request to known quorum: {:?}", current_view);
 
-            self.phase = OperationPhase::CommittingQC(Default::default(), 0);
+            self.phase = OperationPhase::LockingQC(Default::default(), 0);
 
             let quorum_join = QuorumJoinReconfMessages::RequestJoinQuorum(current_view.clone());
 
@@ -254,8 +256,7 @@ impl Operation for EnterQuorumOperation {
     fn handle_received_message<NT>(&mut self, node: &mut InternalNode, network: &NT, header: Header, message: OperationMessage) -> Result<OperationResponse>
         where NT: QuorumConfigNetworkNode + 'static {
         let message = Self::unwrap_operation_message(message);
-
-
+        
         let msg_result = match message {
             QuorumJoinReconfMessages::RequestJoinQuorum(_) => {
                 error!("Received request join quorum message while we are the ones requesting information. Ignoring.");

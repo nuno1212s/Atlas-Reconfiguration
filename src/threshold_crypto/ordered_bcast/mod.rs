@@ -1,3 +1,5 @@
+pub mod network;
+
 use std::collections::{BTreeSet, VecDeque};
 use std::sync::Arc;
 
@@ -9,6 +11,7 @@ use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::reconfiguration_node::ReconfigurationNode;
 
 use crate::message::{OrderedBCastMessage, ReconfData, ReconfigurationMessage};
+use crate::threshold_crypto::ordered_bcast::network::OrderedBCastNode;
 
 /// Ordering of messages received our of order
 struct PendingOrderedBCastMessages<T> {
@@ -33,7 +36,7 @@ struct PendingOrderedBCastMessages<T> {
 ///
 /// The ordered broadcast protocol always chooses the leader to be the node which starts
 /// the protocol
-pub(crate) struct OrderedBroadcast<T>  {
+pub(crate) struct OrderedBroadcast<T> {
     // Our ID
     our_id: NodeId,
     // The leader of this ordered broadcast
@@ -42,9 +45,6 @@ pub(crate) struct OrderedBroadcast<T>  {
     threshold: usize,
     // The members that are partaking in this broadcast
     members: Vec<NodeId>,
-    // The function that we are going to utilize to create the messages
-    // That must be sent by this protocol
-    msg_creation_func: fn(OrderedBCastMessage<T>) -> ReconfigurationMessage,
     // The pending messages that we still have not processed
     pending_message: PendingOrderedBCastMessages<T>,
     // The current phase of this broadcast
@@ -70,19 +70,16 @@ pub(crate) enum OrderedBCastPhase<T> {
 }
 
 impl<T> OrderedBroadcast<T> where T: Clone {
-
     /// Initialize a new ordered broadcast instance
     pub fn init_ordered_bcast(our_id: NodeId,
                               leader: NodeId,
                               threshold: usize,
-                              members: Vec<NodeId>,
-                              msg_creation_func: fn(OrderedBCastMessage<T>) -> ReconfigurationMessage) -> Self {
+                              members: Vec<NodeId>,) -> Self {
         Self {
             our_id,
             leader,
             threshold,
             members,
-            msg_creation_func,
             pending_message: PendingOrderedBCastMessages {
                 pending_order: Default::default(),
                 pending_order_vote: Default::default(),
@@ -91,7 +88,7 @@ impl<T> OrderedBroadcast<T> where T: Clone {
         }
     }
 
-    fn is_ready(&self) -> bool {
+    pub fn is_ready(&self) -> bool {
         if let OrderedBCastPhase::Done(_) = &self.phase {
             true
         } else {
@@ -99,8 +96,8 @@ impl<T> OrderedBroadcast<T> where T: Clone {
         }
     }
 
-    pub(crate) fn handle_message<NT>(&mut self, node: Arc<NT>, header: Header, bcast_message: OrderedBCastMessage<T>)
-        where NT: ReconfigurationNode<ReconfData> + 'static {
+    pub(crate) fn handle_message<NT>(&mut self, node: &NT, header: Header, bcast_message: OrderedBCastMessage<T>)
+        where NT: OrderedBCastNode<T> {
         match &mut self.phase {
             OrderedBCastPhase::CollectionPhase(received, voted) => {
                 match bcast_message {
@@ -109,7 +106,6 @@ impl<T> OrderedBroadcast<T> where T: Clone {
                             received.push(value);
 
                             if voted.len() >= self.threshold {
-
                                 let received_cpy = received.clone();
 
                                 // We have received enough messages to begin the ordering phase
@@ -159,23 +155,17 @@ impl<T> OrderedBroadcast<T> where T: Clone {
         }
     }
 
-    fn decide_and_bcast_order<NT>(&mut self, node: Arc<NT>, order: Vec<T>)
-        where NT: ReconfigurationNode<ReconfData> + 'static {
-
-        let message = (self.msg_creation_func)(OrderedBCastMessage::Order(order));
-
-        node.broadcast_reconfig_message(message, self.members.clone().into_iter());
+    fn decide_and_bcast_order<NT>(&mut self, node: &NT, order: Vec<T>)
+        where NT: OrderedBCastNode<T> {
+        node.broadcast_ordered_bcast_message(OrderedBCastMessage::Order(order), self.members.clone().into_iter());
     }
 
-    fn vote_on_order<NT>(&mut self, node: Arc<NT>, digest: Digest)
-        where NT: ReconfigurationNode<ReconfData> + 'static {
-
-        let message = (self.msg_creation_func)(OrderedBCastMessage::OrderVote(digest));
-
-        node.broadcast_reconfig_message(message, self.members.clone().into_iter());
+    fn vote_on_order<NT>(&mut self, node: &NT, digest: Digest)
+        where NT: OrderedBCastNode<T> {
+        node.broadcast_ordered_bcast_message(OrderedBCastMessage::OrderVote(digest), self.members.clone().into_iter());
     }
 
-    fn finish(self) -> Vec<T> {
+    pub fn finish(self) -> Vec<T> {
         if let OrderedBCastPhase::Done(order) = self.phase {
             order
         } else {

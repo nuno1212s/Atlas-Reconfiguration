@@ -225,6 +225,8 @@ impl QuorumAcceptNodeOperation {
 
                     self.entering_node = header.from();
                 }
+
+                return Ok(OperationResponse::Completed);
             }
             OperationPhase::Done(view) => {}
             OperationPhase::Waiting => panic!("We have received a commit QC message while we are still waiting for the join request to be received"),
@@ -259,6 +261,7 @@ impl Operation for QuorumAcceptNodeOperation {
 
     fn handle_received_message<NT>(&mut self, node: &mut InternalNode, network: &NT, header: Header, message: OperationMessage) -> atlas_common::error::Result<OperationResponse>
         where NT: QuorumConfigNetworkNode + 'static {
+
         let message = Self::unwrap_operation_message(message);
 
         match message {
@@ -277,7 +280,9 @@ impl Operation for QuorumAcceptNodeOperation {
 
     fn finish<NT>(mut self, observer: &mut InternalNode, network: &NT) -> atlas_common::error::Result<()>
         where NT: QuorumConfigNetworkNode + 'static {
-        todo!()
+        observer.observer().install_quorum_view(self.received_committed_qc.unwrap().quorum().clone());
+
+        Ok(())
     }
 }
 

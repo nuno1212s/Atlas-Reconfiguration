@@ -126,7 +126,7 @@ pub enum ThresholdMessages {
     // The ordered broadcast messages relating to the dealer part of the DKG protocol
     DkgDealer(OrderedBCastMessage<DealerPart>),
     // The ordered broadcast messages relating to the ack part of the DKG protocol
-    DkgAck(OrderedBCastMessage<Ack>),
+    DkgAck(OrderedBCastMessage<Vec<Ack>>),
 }
 
 /// The arguments for the distributed key generation protocol
@@ -137,6 +137,8 @@ pub struct ThresholdDKGArgs {
     pub quorum: Vec<NodeId>,
     // The threshold
     pub threshold: usize,
+    // The leader of this DKG iteration
+    pub leader: NodeId
 }
 
 /// Network reconfiguration protocol
@@ -409,10 +411,11 @@ impl QuorumEnterRequest {
 }
 
 impl ThresholdDKGArgs {
-    pub fn init_args(quorum: Vec<NodeId>, threshold: usize) -> Self {
+    pub fn init_args(quorum: Vec<NodeId>, threshold: usize, leader: NodeId) -> Self {
         Self {
             quorum,
             threshold,
+            leader,
         }
     }
 }
@@ -459,6 +462,10 @@ impl CommittedQC {
         Self {
             proofs,
         }
+    }
+
+    pub fn quorum(&self) -> &QuorumView {
+        &self.proofs.first().unwrap().message().view()
     }
 
     pub fn proofs(&self) -> &Vec<StoredMessage<QuorumCommitAcceptResponse>> {

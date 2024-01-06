@@ -6,6 +6,7 @@ use atlas_core::reconfiguration_protocol::QuorumThresholdCrypto;
 
 mod ordered_bcast;
 mod threshold_negotiation;
+mod network;
 
 /// The threshold crypto struct, which will be used to
 /// handle all threshold crypto operations
