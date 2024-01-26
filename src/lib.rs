@@ -17,15 +17,15 @@ use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::Header;
-use atlas_communication::NodeConnections;
-use atlas_communication::reconfiguration_node::{ReconfigurationIncomingHandler, ReconfigurationNode};
+use atlas_communication::{NodeConnections, NodeIncomingRqHandler};
+use atlas_communication::reconfiguration_node::{ReconfigurationNode};
 use atlas_core::reconfiguration_protocol::{QuorumJoinCert, ReconfigResponse, ReconfigurableNodeTypes, ReconfigurationProtocol};
 use atlas_core::timeouts::{RqTimeout, TimeoutKind, Timeouts};
 
 use crate::config::ReconfigurableNetworkConfig;
 use crate::message::{ReconfData, ReconfigMessage, ReconfigurationMessage};
 use crate::network_reconfig::{GeneralNodeInfo, NetworkInfo, NetworkNodeState};
-use crate::quorum_config::{Node,  QuorumObserver, QuorumView};
+use crate::quorum_config::{Node, QuorumObserver, QuorumView};
 use crate::quorum_config::network::QuorumConfigNetworkWrapper;
 
 pub mod config;
@@ -170,10 +170,10 @@ impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
                 }
             }
 
-            let optional_message = self.network_node.reconfiguration_message_handler().try_receive_reconfig_message(Some(Duration::from_millis(1000))).unwrap();
+            let message = self.network_node.reconfiguration_message_handler().receive_requests(Some(Duration::from_millis(1000)))?;
 
-            if let Some(message) = optional_message {
-                let (header, message) : (Header, ReconfigurationMessage) = message.into_inner();
+            message.into_iter().map(|message| {
+                let (header, message): (Header, ReconfigurationMessage) = message.into_inner();
 
                 match message {
                     ReconfigurationMessage::NetworkReconfig(network_reconfig) => {
@@ -206,7 +206,9 @@ impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
                     }
                     ReconfigurationMessage::ThresholdCrypto(_) => {}
                 }
-            }
+
+                Ok(())
+            }).collect::<Result<_>>()?;
         }
     }
 
@@ -279,7 +281,7 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocolHandle {
         std::thread::Builder::new()
             .name(format!("Reconfiguration Protocol Thread"))
             .spawn(move || {
-                let node_type= Node::initialize_with_observer(our_id, cpy_obs, node_type);
+                let node_type = Node::initialize_with_observer(our_id, cpy_obs, node_type);
 
                 let mut reconfigurable_node = ReconfigurableNode {
                     seq_gen: SeqNoGen { seq: SeqNo::ZERO },

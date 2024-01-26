@@ -14,7 +14,7 @@ use atlas_common::peer_addr::PeerAddr;
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::message_signing::NetworkMessageSignatureVerifier;
 use atlas_communication::reconfiguration_node::NetworkInformationProvider;
-use atlas_communication::serialize::{Buf, Serializable};
+use atlas_communication::serialize::{Buf, Serializable, SerializableVerifier};
 use atlas_core::serialize::ReconfigurationProtocolMessage;
 use atlas_core::timeouts::RqTimeout;
 
@@ -355,20 +355,25 @@ impl KnownNodesMessage {
 }
 
 impl Debug for NodeTriple {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "NodeTriple {{ node_id: {:?}, addr: {:?}, type: {:?}}}", self.node_id, self.addr, self.node_type)
     }
 }
 
 pub struct ReconfData;
 
-impl Serializable for ReconfData {
-    type Message = ReconfigurationMessage;
+pub struct ReconfVerifier;
 
-    fn verify_message_internal<NI, SV>(info_provider: &Arc<NI>, header: &Header, msg: &Self::Message) -> atlas_common::error::Result<()>
-        where NI: NetworkInformationProvider, SV: NetworkMessageSignatureVerifier<Self, NI>, Self: Sized {
+impl SerializableVerifier<ReconfigurationMessage> for ReconfVerifier {
+    fn verify_message<NI>(_info_provider: &Arc<NI>, _header: &Header, _message: &ReconfigurationMessage)
+        -> atlas_common::error::Result<()> where NI: NetworkInformationProvider {
         Ok(())
     }
+}
+
+impl Serializable for ReconfData {
+    type Message = ReconfigurationMessage;
+    type Verifier = ReconfVerifier;
 
     #[cfg(feature = "serialize_capnp")]
     fn serialize_capnp(builder: febft_capnp::messages_capnp::system::Builder, msg: &Self::Message) -> atlas_common::error::Result<()> {
