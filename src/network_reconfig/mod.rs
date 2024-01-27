@@ -14,7 +14,7 @@ use atlas_common::ordering::SeqNo;
 use atlas_common::peer_addr::PeerAddr;
 use atlas_communication::byte_stub::connections::NetworkConnectionController;
 use atlas_communication::message::Header;
-use atlas_communication::reconfiguration_node::{NetworkInformationProvider, NetworkUpdateMessage, ReconfigurationNetworkUpdate};
+use atlas_communication::reconfiguration::{NetworkInformationProvider, NetworkUpdateMessage, ReconfigurationMessageHandler, ReconfigurationNetworkUpdate};
 use atlas_communication::stub::{ModuleOutgoingStub, RegularNetworkStub};
 use atlas_core::timeouts::Timeouts;
 
@@ -451,14 +451,13 @@ impl GeneralNodeInfo {
                 }
 
                 for (node, conn_results) in node_results {
-                    for conn_result in conn_results {
-                        if let Err(err) = conn_result.recv().unwrap() {
-                            error!("Error while connecting to another node: {:?}", err);
-                        }
+                    if let Err(err) = conn_results {
+                        error!("Error while connecting to another node: {:?}", err);
+                        continue;
                     }
-
                     info!("{:?} // Connected to node {:?}",self.network_view.node_id(), node);
                 }
+                
                 let res = network_node.outgoing_stub().broadcast_signed(join_message, known_nodes.clone().into_iter());
 
                 info!("Broadcasting reconfiguration network join message to known nodes {:?}, {:?}", known_nodes, res);
@@ -516,10 +515,8 @@ impl GeneralNodeInfo {
                 }
 
                 for (node, conn_results) in node_results {
-                    for conn_result in conn_results {
-                        if let Err(err) = conn_result.recv().unwrap() {
-                            error!("Error while connecting to another node: {:?}", err);
-                        }
+                    if let Err(err) = conn_results {
+                        error!("Error while connecting to another node: {:?}", err);
                     }
                 }
 
@@ -559,7 +556,7 @@ impl GeneralNodeInfo {
         }
     }
 
-    pub(super) fn handle_network_reconfig_msg<NT>(&mut self, seq_gen: &mut SeqNoGen, network_node: &Arc<NT>, timeouts: &Timeouts, header: Header, message: NetworkReconfigMessage) -> NetworkProtocolResponse
+    pub(super) fn handle_network_reconfig_msg<NT>(&mut self, seq_gen: &mut SeqNoGen, network_node: &Arc<NT>, reconf_msg_handler: &ReconfigurationMessageHandler, timeouts: &Timeouts, header: Header, message: NetworkReconfigMessage) -> NetworkProtocolResponse
         where NT: RegularNetworkStub<ReconfData> + 'static {
         let (seq, message) = message.into_inner();
 
@@ -571,7 +568,7 @@ impl GeneralNodeInfo {
                     NetworkReconfigMessageType::NetworkJoinRequest(join_request) => {
                         info!("Received a network join request from {:?} while joining the network", header.from());
 
-                        self.handle_join_request(network_node, header, seq, join_request)
+                        self.handle_join_request(network_node, reconf_msg_handler, header, seq, join_request)
                     }
                     NetworkReconfigMessageType::NetworkJoinResponse(join_response) => {
                         if responded.insert(header.from()) {
@@ -621,7 +618,7 @@ impl GeneralNodeInfo {
                         NetworkProtocolResponse::Nil
                     }
                     NetworkReconfigMessageType::NetworkHelloRequest(hello_request, confirmations) => {
-                        self.handle_hello_request(network_node, header, seq, hello_request, confirmations);
+                        self.handle_hello_request(network_node, reconf_msg_handler, header, seq, hello_request, confirmations);
 
                         NetworkProtocolResponse::Nil
                     }
@@ -636,13 +633,13 @@ impl GeneralNodeInfo {
             } => {
                 match message {
                     NetworkReconfigMessageType::NetworkJoinRequest(join_request) => {
-                        return self.handle_join_request(network_node, header, seq, join_request);
+                        return self.handle_join_request(network_node, reconf_msg_handler, header, seq, join_request);
                     }
                     NetworkReconfigMessageType::NetworkJoinResponse(_) => {
                         // Ignored, we are already a stable member of the network
                     }
                     NetworkReconfigMessageType::NetworkHelloRequest(sender_info, confirmations) => {
-                        self.handle_hello_request(network_node, header, seq, sender_info, confirmations)
+                        self.handle_hello_request(network_node, reconf_msg_handler, header, seq, sender_info, confirmations)
                     }
                     NetworkReconfigMessageType::NetworkHelloReply(known_nodes) => {
                         if responded.insert(header.from()) {
@@ -670,13 +667,13 @@ impl GeneralNodeInfo {
             NetworkNodeState::StableMember => {
                 match message {
                     NetworkReconfigMessageType::NetworkJoinRequest(join_request) => {
-                        return self.handle_join_request(network_node, header, seq, join_request);
+                        return self.handle_join_request(network_node, reconf_msg_handler, header, seq, join_request);
                     }
                     NetworkReconfigMessageType::NetworkJoinResponse(_) => {
                         // Ignored, we are already a stable member of the network
                     }
                     NetworkReconfigMessageType::NetworkHelloRequest(sender_info, confirmations) => {
-                        self.handle_hello_request(network_node, header, seq, sender_info, confirmations);
+                        self.handle_hello_request(network_node, reconf_msg_handler, header, seq, sender_info, confirmations);
                     }
                     NetworkReconfigMessageType::NetworkHelloReply(_) => {
                         // Ignored, we are already a stable member of the network
@@ -695,7 +692,7 @@ impl GeneralNodeInfo {
         }
     }
 
-    pub(super) fn handle_hello_request<NT>(&self, network_node: &Arc<NT>, header: Header, seq: SeqNo, node: NodeTriple, confirmations: Vec<NetworkJoinCert>)
+    pub(super) fn handle_hello_request<NT>(&self, network_node: &Arc<NT>, reconf_msg_handler: &ReconfigurationMessageHandler, header: Header, seq: SeqNo, node: NodeTriple, confirmations: Vec<NetworkJoinCert>)
         where NT: RegularNetworkStub<ReconfData> + 'static {
         if self.network_view.is_valid_network_hello(node.clone(), confirmations) {
             info!("Received a node hello message from node {:?} with enough certificates. Adding it to our known nodes", node);
@@ -717,16 +714,18 @@ impl GeneralNodeInfo {
 
                 let connection_permitted = NetworkUpdateMessage::NodeConnectionPermitted(node.node_id(), node.node_type(), public_key);
 
-                network_node.reconfiguration_network_update().send_reconfiguration_update(connection_permitted);
+                reconf_msg_handler.send_reconfiguration_update(connection_permitted);
             }
         } else {
             error!("Received a network hello request from {:?} but it was not valid", header.from());
         }
     }
 
-    pub(super) fn handle_join_request<NT>(&self, network_node: &Arc<NT>, header: Header, seq: SeqNo, node: NodeTriple) -> NetworkProtocolResponse
+    pub(super) fn handle_join_request<NT>(&self, network_node: &Arc<NT>, reconf_msg_handler: &ReconfigurationMessageHandler, header: Header, seq: SeqNo, node: NodeTriple) -> NetworkProtocolResponse
         where NT: RegularNetworkStub<ReconfData> + 'static {
         let network = network_node.clone();
+        
+        let reconf_msg_handler = reconf_msg_handler.clone();
 
         let target = header.from();
 
@@ -752,7 +751,7 @@ impl GeneralNodeInfo {
 
                 let connection_permitted = NetworkUpdateMessage::NodeConnectionPermitted(triple.node_id(), triple.node_type(), public_key);
 
-                network.reconfiguration_network_update().send_reconfiguration_update(connection_permitted);
+                reconf_msg_handler.send_reconfiguration_update(connection_permitted);
             }
         });
 

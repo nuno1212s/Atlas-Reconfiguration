@@ -12,7 +12,7 @@ use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::peer_addr::PeerAddr;
 use atlas_communication::message::{Header, StoredMessage};
-use atlas_communication::reconfiguration_node::NetworkInformationProvider;
+use atlas_communication::reconfiguration::NetworkInformationProvider;
 use atlas_communication::serialization::{InternalMessageVerifier, Serializable};
 use atlas_core::serialize::ReconfigurationProtocolMessage;
 use atlas_core::timeouts::RqTimeout;

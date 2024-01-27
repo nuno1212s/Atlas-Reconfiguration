@@ -6,6 +6,7 @@ extern crate core;
 
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
+use getset::Getters;
 
 use log::{debug, error, info, warn};
 #[cfg(feature = "serialize_serde")]
@@ -17,7 +18,8 @@ use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::Header;
-use atlas_communication::stub::RegularNetworkStub;
+use atlas_communication::reconfiguration::ReconfigurationMessageHandler;
+use atlas_communication::stub::{ModuleIncomingStub, RegularNetworkStub};
 use atlas_core::reconfiguration_protocol::{QuorumJoinCert, ReconfigResponse, ReconfigurableNodeTypes, ReconfigurationProtocol};
 use atlas_core::timeouts::{RqTimeout, TimeoutKind, Timeouts};
 
@@ -65,6 +67,7 @@ pub enum QuorumProtocolResponse {
 
 
 /// A reconfigurable node, used to handle the reconfiguration of the network as a whole
+#[derive(Getters)]
 pub struct ReconfigurableNode<NT> where NT: Send + 'static {
     seq_gen: SeqNoGen,
     /// The reconfigurable node state
@@ -73,6 +76,9 @@ pub struct ReconfigurableNode<NT> where NT: Send + 'static {
     node: GeneralNodeInfo,
     /// The reference to the network node
     network_node: Arc<NT>,
+    /// The message handler to send network updates to the communication layer
+    #[get = "pub(crate)"]
+    reconfig_network: ReconfigurationMessageHandler,
     /// Handle to the timeouts module
     timeouts: Timeouts,
     // Receive messages from the other protocols
@@ -169,7 +175,7 @@ impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
                 }
             }
 
-            let message = self.network_node.reconfiguration_message_handler().receive_requests(Some(Duration::from_millis(1000)))?;
+            let message = self.network_node.incoming_stub().try_receive_messages(Some(Duration::from_millis(1000)))?;
 
             message.into_iter().map(|message| {
                 let (header, message): (Header, ReconfigurationMessage) = message.into_inner();
@@ -180,7 +186,7 @@ impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
                             self.timeouts.received_reconfig_request(header.from(), network_reconfig.sequence_number());
                         }
 
-                        match self.node.handle_network_reconfig_msg(&mut self.seq_gen, &self.network_node, &self.timeouts, header, network_reconfig) {
+                        match self.node.handle_network_reconfig_msg(&mut self.seq_gen, &self.network_node, &self.reconfig_network, &self.timeouts, header, network_reconfig) {
                             NetworkProtocolResponse::Done => {
                                 self.switch_state(ReconfigurableNodeState::QuorumReconfigurationProtocol);
                             }
@@ -264,6 +270,7 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocolHandle {
     async fn initialize_protocol<NT>(information: Arc<Self::InformationProvider>,
                                      node: Arc<NT>, timeouts: Timeouts,
                                      node_type: ReconfigurableNodeTypes,
+                                     network_updater: ReconfigurationMessageHandler,
                                      min_stable_node_count: usize)
                                      -> Result<Self> where NT: RegularNetworkStub<Self::Serialization> + 'static, Self: Sized {
         let general_info = GeneralNodeInfo::new(information.clone(), NetworkNodeState::Init);
@@ -287,6 +294,7 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocolHandle {
                     node_state: ReconfigurableNodeState::NetworkReconfigurationProtocol,
                     node: general_info,
                     network_node: node.clone(),
+                    reconfig_network: network_updater,
                     timeouts,
                     channel_rx,
                     node_type,
