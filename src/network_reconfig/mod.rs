@@ -12,9 +12,10 @@ use atlas_common::crypto::signature::{KeyPair, PublicKey};
 use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::ordering::SeqNo;
 use atlas_common::peer_addr::PeerAddr;
+use atlas_communication::byte_stub::connections::NetworkConnectionController;
 use atlas_communication::message::Header;
-use atlas_communication::NodeConnections;
-use atlas_communication::reconfiguration_node::{NetworkInformationProvider, NetworkUpdateMessage, ReconfigurationNetworkUpdate, ReconfigurationNode};
+use atlas_communication::reconfiguration_node::{NetworkInformationProvider, NetworkUpdateMessage, ReconfigurationNetworkUpdate};
+use atlas_communication::stub::{ModuleOutgoingStub, RegularNetworkStub};
 use atlas_core::timeouts::Timeouts;
 
 use crate::config::ReconfigurableNetworkConfig;
@@ -422,7 +423,7 @@ pub struct GeneralNodeInfo {
 impl GeneralNodeInfo {
     /// Attempt to iterate and move our current state forward
     pub(super) fn iterate<NT>(&mut self, seq: &mut SeqNoGen, network_node: &Arc<NT>, timeouts: &Timeouts) -> NetworkProtocolResponse
-        where NT: ReconfigurationNode<ReconfData> + 'static {
+        where NT: RegularNetworkStub<ReconfData> + 'static {
         match &mut self.current_state {
             NetworkNodeState::Init => {
                 let known_nodes: Vec<NodeId> = self.network_view.known_nodes().into_iter()
@@ -444,7 +445,7 @@ impl GeneralNodeInfo {
 
                 for node in &known_nodes {
                     info!("{:?} // Connecting to node {:?}", self.network_view.node_id(), node);
-                    let mut node_connection_results = network_node.node_connections().connect_to_node(*node);
+                    let mut node_connection_results = network_node.connections().connect_to_node(*node);
 
                     node_results.push((*node, node_connection_results));
                 }
@@ -458,7 +459,7 @@ impl GeneralNodeInfo {
 
                     info!("{:?} // Connected to node {:?}",self.network_view.node_id(), node);
                 }
-                let res = network_node.broadcast_reconfig_message(join_message, known_nodes.clone().into_iter());
+                let res = network_node.outgoing_stub().broadcast_signed(join_message, known_nodes.clone().into_iter());
 
                 info!("Broadcasting reconfiguration network join message to known nodes {:?}, {:?}", known_nodes, res);
 
@@ -482,7 +483,7 @@ impl GeneralNodeInfo {
     }
 
     pub(super) fn handle_timeout<NT>(&mut self, seq_gen: &mut SeqNoGen, network_node: &Arc<NT>, timeouts: &Timeouts) -> NetworkProtocolResponse
-        where NT: ReconfigurationNode<ReconfData> + 'static
+        where NT: RegularNetworkStub<ReconfData> + 'static
     {
         match &mut self.current_state {
             NetworkNodeState::JoiningNetwork { contacted, responded, certificates } => {
@@ -503,13 +504,13 @@ impl GeneralNodeInfo {
                 let mut node_results = Vec::new();
 
                 for node in &known_nodes {
-                    if network_node.node_connections().is_connected_to_node(node) {
+                    if network_node.connections().has_connection(node) {
                         continue;
                     }
 
                     info!("{:?} // Connecting to node {:?}", self.network_view.node_id(), node);
 
-                    let mut node_connection_results = network_node.node_connections().connect_to_node(*node);
+                    let mut node_connection_results = network_node.connections().connect_to_node(*node);
 
                     node_results.push((*node, node_connection_results));
                 }
@@ -529,7 +530,7 @@ impl GeneralNodeInfo {
 
                 info!("Received timeout, broadcasting reconfiguration network join message to known nodes {:?}", known_nodes);
 
-                let _ = network_node.broadcast_reconfig_message(join_message, known_nodes.into_iter());
+                let _ = network_node.outgoing_stub().broadcast_signed(join_message, known_nodes.into_iter());
 
                 timeouts.timeout_reconfig_request(TIMEOUT_DUR, (contacted / 2 + 1) as u32, seq_gen.curr_seq());
 
@@ -559,7 +560,7 @@ impl GeneralNodeInfo {
     }
 
     pub(super) fn handle_network_reconfig_msg<NT>(&mut self, seq_gen: &mut SeqNoGen, network_node: &Arc<NT>, timeouts: &Timeouts, header: Header, message: NetworkReconfigMessage) -> NetworkProtocolResponse
-        where NT: ReconfigurationNode<ReconfData> + 'static {
+        where NT: RegularNetworkStub<ReconfData> + 'static {
         let (seq, message) = message.into_inner();
 
         match &mut self.current_state {
@@ -583,9 +584,9 @@ impl GeneralNodeInfo {
                                     let unknown_nodes = self.network_view.handle_received_network_view(network_information);
 
                                     for node_id in unknown_nodes {
-                                        if !network_node.node_connections().is_connected_to_node(&node_id) {
+                                        if !network_node.connections().has_connection(&node_id) {
                                             warn!("{:?} // Connecting to node {:?} as we don't know it yet", self.network_view.node_id(), node_id);
-                                            network_node.node_connections().connect_to_node(node_id);
+                                            network_node.connections().connect_to_node(node_id);
                                         }
                                     }
 
@@ -601,7 +602,7 @@ impl GeneralNodeInfo {
 
                                         let introduction_message = ReconfigurationMessage::NetworkReconfig(NetworkReconfigMessage::new(seq_gen.next_seq(), hello_request));
 
-                                        let _ = network_node.broadcast_reconfig_message(introduction_message, known_nodes.into_iter());
+                                        let _ = network_node.outgoing_stub().broadcast_signed(introduction_message, known_nodes.into_iter());
 
                                         self.current_state = NetworkNodeState::IntroductionPhase {
                                             contacted: 0,
@@ -648,10 +649,10 @@ impl GeneralNodeInfo {
                             let unknown_nodes = self.network_view.handle_received_network_view(known_nodes);
 
                             for node_id in unknown_nodes {
-                                if !network_node.node_connections().is_connected_to_node(&node_id) {
+                                if !network_node.connections().has_connection(&node_id) {
                                     warn!("{:?} // Connecting to node {:?} as we don't know it yet", self.network_view.node_id(), node_id);
 
-                                    network_node.node_connections().connect_to_node(node_id);
+                                    network_node.connections().connect_to_node(node_id);
                                 }
                             }
                         }
@@ -695,7 +696,7 @@ impl GeneralNodeInfo {
     }
 
     pub(super) fn handle_hello_request<NT>(&self, network_node: &Arc<NT>, header: Header, seq: SeqNo, node: NodeTriple, confirmations: Vec<NetworkJoinCert>)
-        where NT: ReconfigurationNode<ReconfData> + 'static {
+        where NT: RegularNetworkStub<ReconfData> + 'static {
         if self.network_view.is_valid_network_hello(node.clone(), confirmations) {
             info!("Received a node hello message from node {:?} with enough certificates. Adding it to our known nodes", node);
 
@@ -707,7 +708,7 @@ impl GeneralNodeInfo {
 
             let hello_reply_message = NetworkReconfigMessage::new(seq, NetworkReconfigMessageType::NetworkHelloReply(known_nodes));
 
-            network_node.send_reconfig_message(ReconfigurationMessage::NetworkReconfig(hello_reply_message), header.from());
+            network_node.outgoing_stub().send_signed(ReconfigurationMessage::NetworkReconfig(hello_reply_message), header.from(), true);
 
             if self.network_view.handle_node_introduced(node.clone()) {
                 info!("Node {:?} has joined the network and we hadn't seen it before, sending network update to the network layer", node.node_id());
@@ -724,7 +725,7 @@ impl GeneralNodeInfo {
     }
 
     pub(super) fn handle_join_request<NT>(&self, network_node: &Arc<NT>, header: Header, seq: SeqNo, node: NodeTriple) -> NetworkProtocolResponse
-        where NT: ReconfigurationNode<ReconfData> + 'static {
+        where NT: RegularNetworkStub<ReconfData> + 'static {
         let network = network_node.clone();
 
         let target = header.from();
@@ -742,7 +743,7 @@ impl GeneralNodeInfo {
 
             debug!("Responding to network join request a network join response to {:?} with message {:?}", target, reconfig_message);
 
-            let _ = network.send_reconfig_message(reconfig_message, target);
+            let _ = network.outgoing_stub().send_signed(reconfig_message, target, true);
 
             if network_view.handle_node_introduced(triple.clone()) {
                 info!("Node {:?} has joined the network and we hadn't seen it before, sending network update to the network layer", triple.node_id());

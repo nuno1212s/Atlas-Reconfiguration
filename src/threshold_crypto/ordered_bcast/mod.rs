@@ -8,7 +8,6 @@ use atlas_common::crypto::hash::Digest;
 
 use atlas_common::node_id::NodeId;
 use atlas_communication::message::{Header, StoredMessage};
-use atlas_communication::reconfiguration_node::ReconfigurationNode;
 
 use crate::message::{OrderedBCastMessage, ReconfData, ReconfigurationMessage};
 use crate::threshold_crypto::ordered_bcast::network::OrderedBCastNode;

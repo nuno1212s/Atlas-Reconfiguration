@@ -12,9 +12,8 @@ use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::peer_addr::PeerAddr;
 use atlas_communication::message::{Header, StoredMessage};
-use atlas_communication::message_signing::NetworkMessageSignatureVerifier;
 use atlas_communication::reconfiguration_node::NetworkInformationProvider;
-use atlas_communication::serialize::{Buf, Serializable, SerializableVerifier};
+use atlas_communication::serialization::{InternalMessageVerifier, Serializable};
 use atlas_core::serialize::ReconfigurationProtocolMessage;
 use atlas_core::timeouts::RqTimeout;
 
@@ -364,7 +363,7 @@ pub struct ReconfData;
 
 pub struct ReconfVerifier;
 
-impl SerializableVerifier<ReconfigurationMessage> for ReconfVerifier {
+impl InternalMessageVerifier<ReconfigurationMessage> for ReconfVerifier {
     fn verify_message<NI>(_info_provider: &Arc<NI>, _header: &Header, _message: &ReconfigurationMessage)
         -> atlas_common::error::Result<()> where NI: NetworkInformationProvider {
         Ok(())

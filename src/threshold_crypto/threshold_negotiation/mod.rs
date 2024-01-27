@@ -8,7 +8,6 @@ use atlas_common::crypto::threshold_crypto::thold_crypto::dkg::{Ack, DealerPart,
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_communication::message::{Header, StoredMessage};
-use atlas_communication::reconfiguration_node::ReconfigurationNode;
 
 use crate::message::{OrderedBCastMessage, ReconfData, ReconfigurationMessage, ThresholdDKGArgs, ThresholdMessages};
 use crate::message::ThresholdMessages::DkgAck;

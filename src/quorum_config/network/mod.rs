@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
-use atlas_communication::reconfiguration_node::ReconfigurationNode;
+use atlas_communication::stub::{ModuleOutgoingStub, RegularNetworkStub};
 
 use crate::message::{OperationMessage, ReconfData, ReconfigurationMessage, };
 
@@ -19,24 +19,24 @@ pub struct QuorumConfigNetworkWrapper<NT> {
 }
 
 impl<NT> QuorumConfigNetworkNode for QuorumConfigNetworkWrapper<NT>
-    where NT: ReconfigurationNode<ReconfData> + 'static {
+    where NT: RegularNetworkStub<ReconfData> + 'static {
     fn send_quorum_config_message(&self, message: OperationMessage, target: NodeId) -> Result<()> {
 
         let reconf_message = ReconfigurationMessage::QuorumConfig(message);
 
-        self.node.send_reconfig_message(reconf_message, target)
+        self.node.outgoing_stub().send_signed(reconf_message, target, true)
     }
 
     fn broadcast_quorum_message(&self, message: OperationMessage, target: impl Iterator<Item=NodeId>) -> std::result::Result<(), Vec<NodeId>> {
 
         let reconf_message = ReconfigurationMessage::QuorumConfig(message);
 
-        self.node.broadcast_reconfig_message(reconf_message, target)
+        self.node.outgoing_stub().broadcast_signed(reconf_message, target)
     }
 }
 
 impl<NT> From<Arc<NT>> for QuorumConfigNetworkWrapper<NT>
-    where NT: ReconfigurationNode<ReconfData> + 'static {
+    where NT: RegularNetworkStub<ReconfData> + 'static {
     fn from(node: Arc<NT>) -> Self {
         Self {
             node

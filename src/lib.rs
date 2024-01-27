@@ -17,8 +17,7 @@ use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::Header;
-use atlas_communication::{NodeConnections, NodeIncomingRqHandler};
-use atlas_communication::reconfiguration_node::{ReconfigurationNode};
+use atlas_communication::stub::RegularNetworkStub;
 use atlas_core::reconfiguration_protocol::{QuorumJoinCert, ReconfigResponse, ReconfigurableNodeTypes, ReconfigurationProtocol};
 use atlas_core::timeouts::{RqTimeout, TimeoutKind, Timeouts};
 
@@ -133,7 +132,7 @@ impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
         self.node_state = new_state;
     }
 
-    fn run(&mut self) -> Result<()> where NT: ReconfigurationNode<ReconfData> + 'static {
+    fn run(&mut self) -> Result<()> where NT: RegularNetworkStub<ReconfData> + 'static {
         loop {
             self.handle_local_messages();
 
@@ -212,7 +211,7 @@ impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
         }
     }
 
-    fn handle_local_messages(&mut self) where NT: ReconfigurationNode<ReconfData> + 'static {
+    fn handle_local_messages(&mut self) where NT: RegularNetworkStub<ReconfData> + 'static {
         while let Ok(received_message) = self.channel_rx.try_recv() {
             match received_message {
                 ReconfigMessage::TimeoutReceived(timeout) => {
@@ -266,7 +265,7 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocolHandle {
                                      node: Arc<NT>, timeouts: Timeouts,
                                      node_type: ReconfigurableNodeTypes,
                                      min_stable_node_count: usize)
-                                     -> Result<Self> where NT: ReconfigurationNode<Self::Serialization> + 'static, Self: Sized {
+                                     -> Result<Self> where NT: RegularNetworkStub<Self::Serialization> + 'static, Self: Sized {
         let general_info = GeneralNodeInfo::new(information.clone(), NetworkNodeState::Init);
 
         let quorum_view = Node::init_observer(information.bootstrap_nodes().clone());
