@@ -445,16 +445,20 @@ impl GeneralNodeInfo {
 
                 for node in &known_nodes {
                     info!("{:?} // Connecting to node {:?}", self.network_view.node_id(), node);
+
                     let mut node_connection_results = network_node.connections().connect_to_node(*node);
 
                     node_results.push((*node, node_connection_results));
                 }
 
                 for (node, conn_results) in node_results {
-                    if let Err(err) = conn_results {
-                        error!("Error while connecting to another node: {:?}", err);
-                        continue;
+
+                    for conn_result in conn_results {
+                        if let Err(err) = conn_result.recv().unwrap() {
+                            error!("Error while connecting to another node: {:?}", err);
+                        }
                     }
+
                     info!("{:?} // Connected to node {:?}",self.network_view.node_id(), node);
                 }
                 
@@ -515,8 +519,10 @@ impl GeneralNodeInfo {
                 }
 
                 for (node, conn_results) in node_results {
-                    if let Err(err) = conn_results {
-                        error!("Error while connecting to another node: {:?}", err);
+                    for conn_result in conn_results {
+                        if let Err(err) = conn_result.recv().unwrap() {
+                            error!("Error while connecting to another node: {:?}", err);
+                        }
                     }
                 }
 
