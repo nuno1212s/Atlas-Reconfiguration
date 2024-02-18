@@ -6,13 +6,13 @@ use getset::Getters;
 use serde::{Deserialize, Serialize};
 use atlas_common::crypto::hash::Digest;
 
-use atlas_common::crypto::signature::Signature;
+use atlas_common::crypto::signature::{PublicKey, Signature};
 use atlas_common::crypto::threshold_crypto::thold_crypto::dkg::{Ack, DealerPart};
 use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::peer_addr::PeerAddr;
 use atlas_communication::message::{Header, StoredMessage};
-use atlas_communication::reconfiguration::NetworkInformationProvider;
+use atlas_communication::reconfiguration::{NetworkInformationProvider, NodeInfo};
 use atlas_communication::serialization::{InternalMessageVerifier, Serializable};
 use atlas_core::serialize::ReconfigurationProtocolMessage;
 use atlas_core::timeouts::RqTimeout;
@@ -26,7 +26,7 @@ pub(crate) mod signatures;
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub struct QuorumEnterRequest {
-    node_triple: NodeTriple,
+    node_triple: NodeInfo,
 }
 
 /// Reason message for the rejection of quorum entering request
@@ -55,7 +55,7 @@ pub enum QuorumEnterResponse {
 #[derive(Clone)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub struct QuorumLeaveRequest {
-    node_triple: NodeTriple,
+    node_triple: NodeInfo,
 }
 
 #[derive(Clone)]
@@ -70,15 +70,7 @@ pub struct QuorumLeaveResponse {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub struct KnownNodesMessage {
-    nodes: Vec<NodeTriple>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-pub struct NodeTriple {
-    node_id: NodeId,
-    node_type: NodeType,
-    addr: PeerAddr,
-    pub_key: Vec<u8>,
+    nodes: Vec<NodeInfo>,
 }
 
 /// The response to the request to join the network
@@ -137,7 +129,7 @@ pub struct ThresholdDKGArgs {
     // The threshold
     pub threshold: usize,
     // The leader of this DKG iteration
-    pub leader: NodeId
+    pub leader: NodeId,
 }
 
 /// Network reconfiguration protocol
@@ -152,9 +144,9 @@ pub struct NetworkReconfigMessage {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize_serde", derive(Serialize, Deserialize))]
 pub enum NetworkReconfigMessageType {
-    NetworkJoinRequest(NodeTriple),
+    NetworkJoinRequest(NodeInfo),
     NetworkJoinResponse(NetworkJoinResponseMessage),
-    NetworkHelloRequest(NodeTriple, Vec<NetworkJoinCert>),
+    NetworkHelloRequest(NodeInfo, Vec<NetworkJoinCert>),
     NetworkHelloReply(KnownNodesMessage),
 }
 
@@ -297,44 +289,13 @@ impl NetworkReconfigMessage {
     }
 }
 
-impl NodeTriple {
-    pub fn new(node_id: NodeId, public_key: Vec<u8>, address: PeerAddr, node_type: NodeType) -> Self {
-        Self {
-            node_id,
-            node_type,
-            addr: address,
-            pub_key: public_key,
-        }
-    }
-
-    pub fn node_type(&self) -> NodeType {
-        self.node_type
-    }
-
-    pub fn node_id(&self) -> NodeId {
-        self.node_id
-    }
-
-    pub fn public_key(&self) -> &Vec<u8> {
-        &self.pub_key
-    }
-
-    pub fn addr(&self) -> &PeerAddr {
-        &self.addr
-    }
-}
 
 impl From<&KnownNodes> for KnownNodesMessage {
     fn from(value: &KnownNodes) -> Self {
         let mut known_nodes = Vec::with_capacity(value.node_info().len());
 
         value.node_info().iter().for_each(|(node_id, node_info)| {
-            known_nodes.push(NodeTriple {
-                node_id: *node_id,
-                node_type: node_info.node_type(),
-                addr: node_info.addr().clone(),
-                pub_key: node_info.pk().pk_bytes().to_vec(),
-            })
+            known_nodes.push(node_info.clone())
         });
 
         KnownNodesMessage {
@@ -344,18 +305,12 @@ impl From<&KnownNodes> for KnownNodesMessage {
 }
 
 impl KnownNodesMessage {
-    pub fn known_nodes(&self) -> &Vec<NodeTriple> {
+    pub fn known_nodes(&self) -> &Vec<NodeInfo> {
         &self.nodes
     }
 
-    pub fn into_nodes(self) -> Vec<NodeTriple> {
+    pub fn into_nodes(self) -> Vec<NodeInfo> {
         self.nodes
-    }
-}
-
-impl Debug for NodeTriple {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "NodeTriple {{ node_id: {:?}, addr: {:?}, type: {:?}}}", self.node_id, self.addr, self.node_type)
     }
 }
 
@@ -365,7 +320,7 @@ pub struct ReconfVerifier;
 
 impl InternalMessageVerifier<ReconfigurationMessage> for ReconfVerifier {
     fn verify_message<NI>(_info_provider: &Arc<NI>, _header: &Header, _message: &ReconfigurationMessage)
-        -> atlas_common::error::Result<()> where NI: NetworkInformationProvider {
+                          -> atlas_common::error::Result<()> where NI: NetworkInformationProvider {
         Ok(())
     }
 }
@@ -405,11 +360,11 @@ impl ReconfigurationProtocolMessage for ReconfData {
 }
 
 impl QuorumEnterRequest {
-    pub fn new(node_triple: NodeTriple) -> Self {
+    pub fn new(node_triple: NodeInfo) -> Self {
         Self { node_triple }
     }
 
-    pub fn into_inner(self) -> NodeTriple {
+    pub fn into_inner(self) -> NodeInfo {
         self.node_triple
     }
 }
@@ -482,7 +437,6 @@ impl CommittedQC {
 }
 
 impl PartialEq for LockedQC {
-
     fn eq(&self, other: &Self) -> bool {
         std::iter::zip(self.proofs.iter(), other.proofs.iter()).all(|(msg_a, msg_b)| {
             *msg_a.header() == *msg_b.header() && *msg_a.message() == *msg_b.message()

@@ -5,7 +5,7 @@ use futures::future::join_all;
 use futures::SinkExt;
 use log::{debug, error, info, warn};
 
-use atlas_common::async_runtime as rt;
+use atlas_common::{async_runtime as rt, quiet_unwrap};
 use atlas_common::channel::OneShotRx;
 use atlas_common::crypto::signature;
 use atlas_common::crypto::signature::{KeyPair, PublicKey};
@@ -14,12 +14,12 @@ use atlas_common::ordering::SeqNo;
 use atlas_common::peer_addr::PeerAddr;
 use atlas_communication::byte_stub::connections::NetworkConnectionController;
 use atlas_communication::message::Header;
-use atlas_communication::reconfiguration::{NetworkInformationProvider, NetworkUpdateMessage, ReconfigurationMessageHandler, ReconfigurationNetworkUpdate};
+use atlas_communication::reconfiguration::{NetworkInformationProvider, NetworkUpdateMessage, NodeInfo, ReconfigurationMessageHandler, ReconfigurationNetworkUpdate};
 use atlas_communication::stub::{ModuleOutgoingStub, RegularNetworkStub};
 use atlas_core::timeouts::Timeouts;
 
 use crate::config::ReconfigurableNetworkConfig;
-use crate::message::{KnownNodesMessage, NetworkJoinCert, NetworkJoinRejectionReason, NetworkJoinResponseMessage, NetworkReconfigMessage, NetworkReconfigMessageType, NodeTriple, ReconfData, ReconfigurationMessage, signatures};
+use crate::message::{KnownNodesMessage, NetworkJoinCert, NetworkJoinRejectionReason, NetworkJoinResponseMessage, NetworkReconfigMessage, NetworkReconfigMessageType, ReconfData, ReconfigurationMessage, signatures};
 use crate::{NetworkProtocolResponse, SeqNoGen, TIMEOUT_DUR};
 
 /// The reconfiguration module.
@@ -27,7 +27,7 @@ use crate::{NetworkProtocolResponse, SeqNoGen, TIMEOUT_DUR};
 /// Such as message definitions, important types and etc.
 ///
 /// This module will then be used by the parts of the system which must be reconfigurable
-pub type NetworkPredicate = fn(Arc<NetworkInfo>, NodeTriple) -> OneShotRx<Option<NetworkJoinRejectionReason>>;
+pub type NetworkPredicate = fn(Arc<NetworkInfo>, NodeInfo) -> OneShotRx<Option<NetworkJoinRejectionReason>>;
 
 
 /// Our current view of the network and the information about our own node
@@ -35,11 +35,9 @@ pub type NetworkPredicate = fn(Arc<NetworkInfo>, NodeTriple) -> OneShotRx<Option
 /// directly store information about the quorum, only about the nodes that we
 /// currently know about
 pub struct NetworkInfo {
-    node_id: NodeId,
-    node_type: NodeType,
+    // The information about our own node
+    node_info: NodeInfo,
     key_pair: Arc<KeyPair>,
-
-    address: PeerAddr,
 
     // The list of bootstrap nodes that we initially knew in the network.
     // This will be used to verify attempted node joins
@@ -65,10 +63,8 @@ impl NetworkInfo {
         let boostrap_nodes = known_nodes.iter().map(|triple| triple.node_id()).collect();
 
         NetworkInfo {
-            node_id,
-            node_type,
+            node_info: NodeInfo::new(node_id, node_type, key_pair.public_key().into(), our_address.clone()),
             key_pair: Arc::new(key_pair),
-            address: our_address,
             bootstrap_nodes: boostrap_nodes,
             known_nodes: RwLock::new(KnownNodes::from_known_list(known_nodes)),
             predicates: Vec::new(),
@@ -82,12 +78,10 @@ impl NetworkInfo {
         address: PeerAddr,
     ) -> Self {
         NetworkInfo {
-            node_id,
-            node_type,
+            node_info: NodeInfo::new(node_id, node_type, key_pair.public_key().into(), address),
             key_pair: Arc::new(key_pair),
             known_nodes: RwLock::new(KnownNodes::empty()),
             predicates: vec![],
-            address,
             bootstrap_nodes: vec![],
         }
     }
@@ -109,11 +103,7 @@ impl NetworkInfo {
             for (node_id, (addr, node_type, pk_bytes)) in bootstrap_nodes {
                 let public_key = PublicKey::from_bytes(&pk_bytes[..]).unwrap();
 
-                let info = NodeInfo {
-                    node_type,
-                    pk: public_key,
-                    addr,
-                };
+                let info = NodeInfo::new(node_id, node_type, public_key, addr);
 
                 write_guard.node_info.insert(node_id, info);
             }
@@ -127,11 +117,11 @@ impl NetworkInfo {
     }
 
     pub fn node_id(&self) -> NodeId {
-        self.node_id
+        self.node_info.node_id()
     }
 
     /// Handle a node having introduced itself to us by inserting it into our known nodes
-    pub(crate) fn handle_node_introduced(&self, node: NodeTriple) -> bool {
+    pub(crate) fn handle_node_introduced(&self, node: NodeInfo) -> bool {
         debug!("Handling a node having been introduced {:?}. Handling it", node);
 
         let mut write_guard = self.known_nodes.write().unwrap();
@@ -139,7 +129,7 @@ impl NetworkInfo {
         Self::handle_single_node_introduced(&mut *write_guard, node)
     }
 
-    pub(crate) fn is_valid_network_hello(&self, node: NodeTriple, certificates: Vec<NetworkJoinCert>) -> bool {
+    pub(crate) fn is_valid_network_hello(&self, node: NodeInfo, certificates: Vec<NetworkJoinCert>) -> bool {
         debug!("Received a node hello message from node {:?}. Handling it", node);
 
         for (from, signature) in &certificates {
@@ -187,7 +177,7 @@ impl NetworkInfo {
         for node in known_nodes.into_nodes() {
             let node_id = node.node_id();
 
-            if node_id == self.node_id {
+            if node_id == self.node_id() {
                 continue;
             }
 
@@ -199,19 +189,11 @@ impl NetworkInfo {
         new_nodes
     }
 
-    fn handle_single_node_introduced(write_guard: &mut KnownNodes, node: NodeTriple) -> bool {
+    fn handle_single_node_introduced(write_guard: &mut KnownNodes, node: NodeInfo) -> bool {
         let node_id = node.node_id();
 
         if !write_guard.node_info.contains_key(&node_id) {
-            let public_key = PublicKey::from_bytes(&node.public_key()[..]).unwrap();
-
-            let node_info = NodeInfo {
-                node_type: node.node_type(),
-                pk: public_key,
-                addr: node.addr().clone(),
-            };
-
-            write_guard.node_info.insert(node_id, node_info);
+            write_guard.node_info.insert(node_id, node.into());
 
             true
         } else {
@@ -224,7 +206,7 @@ impl NetworkInfo {
     /// Can we introduce this node to the network
     pub async fn can_introduce_node(
         self: &Arc<Self>,
-        node_id: NodeTriple,
+        node_id: NodeInfo,
     ) -> NetworkJoinResponseMessage {
         let mut results = Vec::with_capacity(self.predicates.len());
 
@@ -254,7 +236,7 @@ impl NetworkInfo {
             .read()
             .unwrap().node_info()
             .get(node)
-            .map(|info| info.pk())
+            .map(|info| info.public_key())
             .cloned()
     }
 
@@ -269,7 +251,7 @@ impl NetworkInfo {
     }
 
     pub fn get_own_addr(&self) -> &PeerAddr {
-        &self.address
+        &self.node_info.addr()
     }
 
     pub fn keypair(&self) -> &Arc<KeyPair> {
@@ -293,18 +275,13 @@ impl NetworkInfo {
             .node_info()
             .iter()
             .map(|(node_id, info)| {
-                (*node_id, info.node_type.clone())
+                (*node_id, info.node_type().clone())
             })
             .collect()
     }
 
-    pub fn node_triple(&self) -> NodeTriple {
-        NodeTriple::new(
-            self.node_id,
-            self.key_pair.public_key_bytes().to_vec(),
-            self.address.clone(),
-            self.node_type,
-        )
+    pub fn node_triple(&self) -> NodeInfo {
+        self.node_info.clone()
     }
 
     pub fn bootstrap_nodes(&self) -> &Vec<NodeId> {
@@ -313,54 +290,16 @@ impl NetworkInfo {
 }
 
 impl NetworkInformationProvider for NetworkInfo {
-    fn get_own_id(&self) -> NodeId {
-        self.node_id
-    }
-
-    fn get_own_addr(&self) -> PeerAddr {
-        self.address.clone()
+    fn own_node_info(&self) -> &NodeInfo {
+        &self.node_info
     }
 
     fn get_key_pair(&self) -> &Arc<KeyPair> {
         &self.key_pair
     }
 
-    fn get_own_node_type(&self) -> NodeType {
-        self.node_type
-    }
-
-    fn get_node_type(&self, node: &NodeId) -> Option<NodeType> {
-        self.known_nodes.read().unwrap().node_info.get(node).map(|info| info.node_type)
-    }
-
-    fn get_public_key(&self, node: &NodeId) -> Option<PublicKey> {
-        self.known_nodes.read().unwrap().node_info.get(node).map(|info| info.pk.clone())
-    }
-
-    fn get_addr_for_node(&self, node: &NodeId) -> Option<PeerAddr> {
-        self.known_nodes.read().unwrap().node_info.get(node).map(|info| info.addr.clone())
-    }
-}
-
-/// The node info for a given network node
-#[derive(Clone)]
-pub(crate) struct NodeInfo {
-    node_type: NodeType,
-    pk: PublicKey,
-    addr: PeerAddr,
-}
-
-impl NodeInfo {
-    pub(crate) fn node_type(&self) -> NodeType {
-        self.node_type
-    }
-
-    pub(crate) fn pk(&self) -> &PublicKey {
-        &self.pk
-    }
-
-    pub(crate) fn addr(&self) -> &PeerAddr {
-        &self.addr
+    fn get_node_info(&self, node: &NodeId) -> Option<NodeInfo> {
+        self.known_nodes.read().unwrap().node_info().get(node).cloned()
     }
 }
 
@@ -378,7 +317,7 @@ impl KnownNodes {
         }
     }
 
-    fn from_known_list(nodes: Vec<NodeTriple>) -> Self {
+    fn from_known_list(nodes: Vec<NodeInfo>) -> Self {
         let mut known_nodes = Self::empty();
 
         for node in nodes {
@@ -453,15 +392,17 @@ impl GeneralNodeInfo {
 
                 for (node, conn_results) in node_results {
 
+                    let conn_results = quiet_unwrap!(conn_results, NetworkProtocolResponse::Nil);
+
                     for conn_result in conn_results {
                         if let Err(err) = conn_result.recv().unwrap() {
                             error!("Error while connecting to another node: {:?}", err);
                         }
                     }
 
-                    info!("{:?} // Connected to node {:?}",self.network_view.node_id(), node);
+                    info!("{:?} // Connected to node {:?}", self.network_view.node_id(), node);
                 }
-                
+
                 let res = network_node.outgoing_stub().broadcast_signed(join_message, known_nodes.clone().into_iter());
 
                 info!("Broadcasting reconfiguration network join message to known nodes {:?}, {:?}", known_nodes, res);
@@ -519,6 +460,9 @@ impl GeneralNodeInfo {
                 }
 
                 for (node, conn_results) in node_results {
+
+                    let conn_results = quiet_unwrap!(conn_results, NetworkProtocolResponse::Nil);
+
                     for conn_result in conn_results {
                         if let Err(err) = conn_result.recv().unwrap() {
                             error!("Error while connecting to another node: {:?}", err);
@@ -698,7 +642,7 @@ impl GeneralNodeInfo {
         }
     }
 
-    pub(super) fn handle_hello_request<NT>(&self, network_node: &Arc<NT>, reconf_msg_handler: &ReconfigurationMessageHandler, header: Header, seq: SeqNo, node: NodeTriple, confirmations: Vec<NetworkJoinCert>)
+    pub(super) fn handle_hello_request<NT>(&self, network_node: &Arc<NT>, reconf_msg_handler: &ReconfigurationMessageHandler, header: Header, seq: SeqNo, node: NodeInfo, confirmations: Vec<NetworkJoinCert>)
         where NT: RegularNetworkStub<ReconfData> + 'static {
         if self.network_view.is_valid_network_hello(node.clone(), confirmations) {
             info!("Received a node hello message from node {:?} with enough certificates. Adding it to our known nodes", node);
@@ -727,10 +671,10 @@ impl GeneralNodeInfo {
         }
     }
 
-    pub(super) fn handle_join_request<NT>(&self, network_node: &Arc<NT>, reconf_msg_handler: &ReconfigurationMessageHandler, header: Header, seq: SeqNo, node: NodeTriple) -> NetworkProtocolResponse
+    pub(super) fn handle_join_request<NT>(&self, network_node: &Arc<NT>, reconf_msg_handler: &ReconfigurationMessageHandler, header: Header, seq: SeqNo, node: NodeInfo) -> NetworkProtocolResponse
         where NT: RegularNetworkStub<ReconfData> + 'static {
         let network = network_node.clone();
-        
+
         let reconf_msg_handler = reconf_msg_handler.clone();
 
         let target = header.from();
