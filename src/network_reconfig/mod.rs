@@ -167,7 +167,7 @@ impl NetworkInfo {
 
     /// Handle us having received a successfull network join response, with the list of known nodes
     /// Returns a list of nodes that we didn't know before, but that have now been added
-    pub(crate) fn handle_received_network_view(&self, known_nodes: KnownNodesMessage) -> Vec<NodeId> {
+    pub(crate) fn handle_received_network_view(&self, known_nodes: KnownNodesMessage) -> Vec<NodeInfo> {
         let mut write_guard = self.known_nodes.write().unwrap();
 
         debug!("Updating our known nodes list with the received list {:?}", known_nodes);
@@ -181,8 +181,8 @@ impl NetworkInfo {
                 continue;
             }
 
-            if Self::handle_single_node_introduced(&mut *write_guard, node) {
-                new_nodes.push(node_id);
+            if Self::handle_single_node_introduced(&mut *write_guard, node.clone()) {
+                new_nodes.push(node);
             }
         }
 
@@ -391,7 +391,6 @@ impl GeneralNodeInfo {
                 }
 
                 for (node, conn_results) in node_results {
-
                     let conn_results = quiet_unwrap!(conn_results, NetworkProtocolResponse::Nil);
 
                     for conn_result in conn_results {
@@ -460,7 +459,6 @@ impl GeneralNodeInfo {
                 }
 
                 for (node, conn_results) in node_results {
-
                     let conn_results = quiet_unwrap!(conn_results, NetworkProtocolResponse::Nil);
 
                     for conn_result in conn_results {
@@ -531,9 +529,14 @@ impl GeneralNodeInfo {
                                     let unknown_nodes = self.network_view.handle_received_network_view(network_information);
 
                                     for node_id in unknown_nodes {
-                                        if !network_node.connections().has_connection(&node_id) {
+                                        if !network_node.connections().has_connection(&node_id.node_id()) {
+                                            match (self.network_view.own_node_info().node_type(), node_id.node_type()) {
+                                                (NodeType::Client, NodeType::Client) => { continue; }
+                                                _ => {}
+                                            }
+
                                             warn!("{:?} // Connecting to node {:?} as we don't know it yet", self.network_view.node_id(), node_id);
-                                            network_node.connections().connect_to_node(node_id);
+                                            network_node.connections().connect_to_node(node_id.node_id());
                                         }
                                     }
 
@@ -596,10 +599,14 @@ impl GeneralNodeInfo {
                             let unknown_nodes = self.network_view.handle_received_network_view(known_nodes);
 
                             for node_id in unknown_nodes {
-                                if !network_node.connections().has_connection(&node_id) {
+                                if !network_node.connections().has_connection(&node_id.node_id()) {
+                                    match (self.network_view.own_node_info().node_type(), node_id.node_type()) {
+                                        (NodeType::Client, NodeType::Client) => { continue; }
+                                        _ => {}
+                                    }
                                     warn!("{:?} // Connecting to node {:?} as we don't know it yet", self.network_view.node_id(), node_id);
 
-                                    network_node.connections().connect_to_node(node_id);
+                                    network_node.connections().connect_to_node(node_id.node_id());
                                 }
                             }
                         }
