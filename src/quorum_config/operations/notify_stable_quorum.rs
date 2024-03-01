@@ -1,7 +1,9 @@
+use atlas_common::Err;
+use atlas_common::node_id::NodeType;
 use atlas_communication::message::Header;
 use atlas_core::reconfiguration_protocol::{QuorumReconfigurationMessage, QuorumReconfigurationResponse};
 use crate::message::OperationMessage;
-use crate::quorum_config::InternalNode;
+use crate::quorum_config::{InternalNode, NodeStatusType};
 use crate::quorum_config::network::QuorumConfigNetworkNode;
 use crate::quorum_config::operations::{Operation, OperationExecutionCandidateError, OperationResponse};
 
@@ -31,7 +33,14 @@ impl Operation for NotifyQuorumOperation {
     const OP_NAME: &'static str = "NOTIFY_QUORUM";
 
     fn can_execute(observer: &InternalNode) -> Result<(), OperationExecutionCandidateError> where Self: Sized {
-        Ok(())
+        match observer.node_info().node_type() {
+            NodeType::Replica { .. } => {
+                Ok(())
+            },
+            _ => {
+                Err!(OperationExecutionCandidateError::InvalidNodeType(observer.node_info().node_type().clone()))
+            }
+        }
     }
 
     fn iterate<NT>(&mut self, node: &mut InternalNode, network: &NT) -> atlas_common::error::Result<OperationResponse> where NT: QuorumConfigNetworkNode + 'static {

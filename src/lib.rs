@@ -18,7 +18,7 @@ use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::Header;
-use atlas_communication::reconfiguration::ReconfigurationMessageHandler;
+use atlas_communication::reconfiguration::{NetworkInformationProvider, ReconfigurationMessageHandler};
 use atlas_communication::stub::{ModuleIncomingStub, RegularNetworkStub};
 use atlas_core::reconfiguration_protocol::{QuorumJoinCert, ReconfigResponse, ReconfigurableNodeTypes, ReconfigurationProtocol};
 use atlas_core::timeouts::{RqTimeout, TimeoutKind, Timeouts};
@@ -277,7 +277,7 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocolHandle {
 
         let quorum_view = Node::init_observer(information.bootstrap_nodes().clone());
 
-        let our_id = information.node_id();
+        let our_info = information.own_node_info().clone();
 
         let (channel_tx, channel_rx) = channel::new_bounded_sync(128,
                                                                  Some("Reconfiguration message channel"));
@@ -287,7 +287,7 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocolHandle {
         std::thread::Builder::new()
             .name(format!("Reconfiguration Protocol Thread"))
             .spawn(move || {
-                let node_type = Node::initialize_with_observer(our_id, cpy_obs, node_type);
+                let node_type = Node::initialize_with_observer(our_info, cpy_obs, node_type);
 
                 let mut reconfigurable_node = ReconfigurableNode {
                     seq_gen: SeqNoGen { seq: SeqNo::ZERO },

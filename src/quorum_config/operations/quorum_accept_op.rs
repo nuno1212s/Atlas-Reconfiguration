@@ -9,7 +9,7 @@ use atlas_communication::message::Header;
 use atlas_core::reconfiguration_protocol::QuorumReconfigurationResponse;
 
 use crate::message::{CommittedQC, LockedQC, OperationMessage, QuorumAcceptResponse, QuorumCommitAcceptResponse, QuorumCommitResponse, QuorumJoinReconfMessages, QuorumJoinResponse, QuorumRejectionReason};
-use crate::quorum_config::{InternalNode, NodeType, QuorumView};
+use crate::quorum_config::{InternalNode, NodeStatusType, QuorumView};
 use crate::quorum_config::{get_f_for_n, get_quorum_for_n, QuorumCert, QuorumCertPart};
 use crate::quorum_config::network::QuorumConfigNetworkNode;
 use crate::quorum_config::operations::{Operation, OperationExecutionCandidateError, OperationResponse};
@@ -241,10 +241,10 @@ impl Operation for QuorumAcceptNodeOperation {
 
     fn can_execute(observer: &InternalNode) -> Result<(), OperationExecutionCandidateError> where Self: Sized {
         match observer.node_type() {
-            NodeType::ClientNode { .. } => {
+            NodeStatusType::ClientNode { .. } => {
                 Err(OperationExecutionCandidateError::RequirementsNotMet(QuorumAcceptOpError::ClientsNotPermitted.to_string()))
             }
-            NodeType::QuorumNode { .. } => {
+            NodeStatusType::QuorumNode { .. } => {
                 if observer.is_part_of_quorum() {
                     Ok(())
                 } else {

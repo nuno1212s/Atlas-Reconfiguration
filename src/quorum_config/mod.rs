@@ -15,12 +15,14 @@ use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::{Header, StoredMessage};
+use atlas_communication::reconfiguration::NodeInfo;
 use atlas_core::reconfiguration_protocol::{QuorumReconfigurationMessage, QuorumReconfigurationResponse, QuorumUpdateMessage, ReconfigurableNodeTypes};
 use atlas_core::timeouts::Timeouts;
 
 use crate::message::{CommittedQC, LockedQC, OperationMessage, QuorumAcceptResponse, QuorumCommitAcceptResponse, QuorumJoinReconfMessages, QuorumObtainInfoOpMessage};
 use crate::quorum_config::network::QuorumConfigNetworkNode;
 use crate::quorum_config::operations::{Operation, OperationObj, OperationResponse};
+use crate::quorum_config::operations::client_notify_quorum_op::NotifyClientOperation;
 use crate::quorum_config::operations::notify_stable_quorum::NotifyQuorumOperation;
 use crate::quorum_config::operations::quorum_accept_op::QuorumAcceptNodeOperation;
 use crate::quorum_config::operations::quorum_info_op::ObtainQuorumInfoOP;
@@ -62,7 +64,7 @@ pub enum ClientState {
 
 /// The type of node we are representing
 #[derive(Clone)]
-pub enum NodeType {
+pub enum NodeStatusType {
     ClientNode {
         quorum_comm: ChannelSyncTx<QuorumUpdateMessage>,
         current_state: ClientState,
@@ -77,8 +79,8 @@ pub enum NodeType {
 #[derive(Getters, CopyGetters, MutGetters)]
 /// The node structure that handles all information required by the node
 pub struct InternalNode {
-    #[get_copy = "pub"]
-    node_id: NodeId,
+    #[get = "pub"]
+    node_info: NodeInfo,
 
     // The observer, maintains the current view of the quorum
     // Since this is shared by a lot of the operations, it is
@@ -90,7 +92,7 @@ pub struct InternalNode {
     data: NodeOpData,
 
     #[getset(get = "pub", get_mut = "pub(super)")]
-    node_type: NodeType,
+    node_type: NodeStatusType,
 }
 
 /// The node structure, stores the current state of the node
@@ -203,15 +205,15 @@ impl Node {
         QuorumObserver::from_bootstrap(bootstrap_nodes)
     }
 
-    pub fn initialize_with_observer(node_id: NodeId, observer: QuorumObserver, node_type: ReconfigurableNodeTypes) -> Self {
+    pub fn initialize_with_observer(node_info: NodeInfo, observer: QuorumObserver, node_type: ReconfigurableNodeTypes) -> Self {
         Self {
-            node: InternalNode::init_with_observer(node_id, observer, node_type),
+            node: InternalNode::init_with_observer(node_info, observer, node_type),
             ongoing_ops: OnGoingOperations::initialize(),
         }
     }
 
-    pub fn initialize_node(node_id: NodeId, bootstrap_nodes: Vec<NodeId>, node_type: ReconfigurableNodeTypes) -> (Self, QuorumObserver) {
-        let internal_node = InternalNode::initialize(node_id, bootstrap_nodes, node_type);
+    pub fn initialize_node(node_info: NodeInfo, bootstrap_nodes: Vec<NodeId>, node_type: ReconfigurableNodeTypes) -> (Self, QuorumObserver) {
+        let internal_node = InternalNode::initialize(node_info, bootstrap_nodes, node_type);
 
         let observer = internal_node.observer().clone();
 
@@ -238,13 +240,13 @@ impl Node {
 }
 
 impl InternalNode {
-    fn init_node_type_from(node_type: ReconfigurableNodeTypes) -> NodeType {
+    fn init_node_type_from(node_type: ReconfigurableNodeTypes) -> NodeStatusType {
         match node_type {
-            ReconfigurableNodeTypes::ClientNode(tx) => NodeType::ClientNode {
+            ReconfigurableNodeTypes::ClientNode(tx) => NodeStatusType::ClientNode {
                 quorum_comm: tx,
                 current_state: ClientState::Awaiting,
             },
-            ReconfigurableNodeTypes::QuorumNode(tx, rx) => NodeType::QuorumNode {
+            ReconfigurableNodeTypes::QuorumNode(tx, rx) => NodeStatusType::QuorumNode {
                 quorum_communication: tx,
                 quorum_responses: rx,
                 current_state: ReplicaState::Awaiting,
@@ -252,18 +254,18 @@ impl InternalNode {
         }
     }
 
-    fn init_with_observer(node_id: NodeId, observer: QuorumObserver, node_type: ReconfigurableNodeTypes) -> Self {
+    fn init_with_observer(node_info: NodeInfo, observer: QuorumObserver, node_type: ReconfigurableNodeTypes) -> Self {
         Self {
-            node_id,
+            node_info,
             observer,
             data: NodeOpData::new(),
             node_type: Self::init_node_type_from(node_type),
         }
     }
 
-    fn initialize(node_id: NodeId, bootstrap_nodes: Vec<NodeId>, node_type: ReconfigurableNodeTypes) -> Self {
+    fn initialize(node_info: NodeInfo, bootstrap_nodes: Vec<NodeId>, node_type: ReconfigurableNodeTypes) -> Self {
         Self {
-            node_id,
+            node_info,
             observer: QuorumObserver::from_bootstrap(bootstrap_nodes),
             data: NodeOpData::new(),
             node_type: Self::init_node_type_from(node_type),
@@ -273,6 +275,10 @@ impl InternalNode {
     /// Are we currently part of the quorum?
     pub fn is_part_of_quorum(&self) -> bool {
         self.observer.current_view().quorum_members().contains(&self.node_id())
+    }
+    
+    pub fn node_id(&self) -> NodeId {
+        self.node_info.node_id()
     }
 }
 
@@ -307,8 +313,12 @@ impl OnGoingOperations {
                 let is_part_of_quorum = node.is_part_of_quorum();
 
                 match node.node_type_mut() {
-                    NodeType::ClientNode { .. } => {}
-                    NodeType::QuorumNode { current_state, .. } => {
+                    NodeStatusType::ClientNode { .. } => {
+                        self.launch_client_notify_op(node)?;
+                        
+                        return Ok(QuorumProtocolResponse::DoneInitialSetup);
+                    }
+                    NodeStatusType::QuorumNode { current_state, .. } => {
                         if let ReplicaState::ObtainingInfo = current_state {
                             if is_part_of_quorum {
                                 info!("We have obtained the quorum information, and we are part of the quorum, calling initial setup done");
@@ -360,7 +370,7 @@ impl OnGoingOperations {
         where NT: QuorumConfigNetworkNode + 'static {
         let mut finished_ops = Vec::new();
 
-        if let NodeType::QuorumNode { quorum_responses, .. } = node.node_type().clone() {
+        if let NodeStatusType::QuorumNode { quorum_responses, .. } = node.node_type().clone() {
             while let Ok(response) = quorum_responses.try_recv() {
                 if let Some(target) = self.awaiting_reconfig_response.clone() {
                     if let Some(op) = self.get_mut_operation_of_type(target) {
@@ -379,7 +389,7 @@ impl OnGoingOperations {
         }
 
         match &mut node.node_type {
-            NodeType::ClientNode { current_state, .. } => {
+            NodeStatusType::ClientNode { current_state, .. } => {
                 match current_state {
                     ClientState::Awaiting => {
                         if !self.has_operation_of_type(ObtainQuorumInfoOP::OP_NAME) {
@@ -393,7 +403,7 @@ impl OnGoingOperations {
                     _ => {}
                 }
             }
-            NodeType::QuorumNode { current_state, quorum_responses, .. } => {
+            NodeStatusType::QuorumNode { current_state, quorum_responses, .. } => {
                 match current_state {
                     ReplicaState::Awaiting => {
                         if !self.has_operation_of_type(ObtainQuorumInfoOP::OP_NAME) {
@@ -470,12 +480,12 @@ impl OnGoingOperations {
             }
             OperationMessage::QuorumReconfiguration(reconf_message) => {
                 match node.node_type() {
-                    NodeType::ClientNode { .. } => {
+                    NodeStatusType::ClientNode { .. } => {
                         error!("Received a quorum reconfiguration message on a client node");
 
                         return Ok(QuorumProtocolResponse::Nil);
                     }
-                    NodeType::QuorumNode { current_state, .. } => {
+                    NodeStatusType::QuorumNode { current_state, .. } => {
                         info!("Received a quorum reconfiguration message: {:?} from {:?}", reconf_message, header.from());
 
                         if self.has_operation_of_type(QuorumAcceptNodeOperation::OP_NAME) {
@@ -563,6 +573,14 @@ impl OnGoingOperations {
 
         self.launch_operation(OperationObj::QuorumJoinOp(op))
     }
+    
+    fn launch_client_notify_op(&mut self, node: &InternalNode) -> Result<()> {
+        NotifyClientOperation::can_execute(node)?;
+
+        let operation = NotifyClientOperation::initialize();
+
+        self.launch_operation(OperationObj::NotifyClientOp(operation))
+    }
 
     // function to launch a quorum obtain info operation
     fn launch_quorum_obtain_info_op(&mut self, node: &InternalNode) -> Result<()> {
@@ -601,33 +619,33 @@ impl OnGoingOperations {
     }
 }
 
-impl NodeType {
+impl NodeStatusType {
     // Getters for the members of the enum,
     // which assume the given type matches the one the getter necessitates
     pub fn quorum_communication(&self) -> &ChannelSyncTx<QuorumReconfigurationMessage> {
         match self {
-            NodeType::QuorumNode { quorum_communication, .. } => quorum_communication,
+            NodeStatusType::QuorumNode { quorum_communication, .. } => quorum_communication,
             _ => unreachable!("This node type does not have a quorum communication channel"),
         }
     }
 
     pub fn quorum_responses(&self) -> &ChannelSyncRx<QuorumReconfigurationResponse> {
         match self {
-            NodeType::QuorumNode { quorum_responses, .. } => quorum_responses,
+            NodeStatusType::QuorumNode { quorum_responses, .. } => quorum_responses,
             _ => unreachable!("This node type does not have a quorum response channel"),
         }
     }
 
     pub fn client_communication(&self) -> &ChannelSyncTx<QuorumUpdateMessage> {
         match self {
-            NodeType::ClientNode { quorum_comm, .. } => quorum_comm,
+            NodeStatusType::ClientNode { quorum_comm, .. } => quorum_comm,
             _ => unreachable!("This node type does not have a client communication channel"),
         }
     }
 
     pub fn current_replica_state(&self) -> &ReplicaState {
         match self {
-            NodeType::QuorumNode { current_state, .. } => current_state,
+            NodeStatusType::QuorumNode { current_state, .. } => current_state,
             _ => unreachable!("This node type does not have a replica state"),
         }
     }
