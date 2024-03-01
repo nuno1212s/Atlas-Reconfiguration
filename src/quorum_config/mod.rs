@@ -276,7 +276,7 @@ impl InternalNode {
     pub fn is_part_of_quorum(&self) -> bool {
         self.observer.current_view().quorum_members().contains(&self.node_id())
     }
-    
+
     pub fn node_id(&self) -> NodeId {
         self.node_info.node_id()
     }
@@ -293,6 +293,8 @@ impl OnGoingOperations {
     }
 
     pub fn launch_operation(&mut self, operation: OperationObj) -> Result<()> {
+        info!("Launching operation {}", operation.op_name());
+        
         if self.ongoing_operations.contains_key(operation.op_name()) {
             return Err!(OperationErrors::AlreadyOngoingOperation(operation.op_name()));
         }
@@ -315,7 +317,7 @@ impl OnGoingOperations {
                 match node.node_type_mut() {
                     NodeStatusType::ClientNode { .. } => {
                         self.launch_client_notify_op(node)?;
-                        
+
                         return Ok(QuorumProtocolResponse::DoneInitialSetup);
                     }
                     NodeStatusType::QuorumNode { current_state, .. } => {
@@ -573,7 +575,7 @@ impl OnGoingOperations {
 
         self.launch_operation(OperationObj::QuorumJoinOp(op))
     }
-    
+
     fn launch_client_notify_op(&mut self, node: &InternalNode) -> Result<()> {
         NotifyClientOperation::can_execute(node)?;
 
