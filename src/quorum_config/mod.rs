@@ -316,9 +316,21 @@ impl OnGoingOperations {
 
                 match node.node_type_mut() {
                     NodeStatusType::ClientNode { .. } => {
-                        self.launch_client_notify_op(node)?;
+                        return match operation_name {
+                            NotifyClientOperation::OP_NAME => {
+                                info!("We have notified the client, calling initial setup done");
 
-                        return Ok(QuorumProtocolResponse::DoneInitialSetup);
+                                Ok(QuorumProtocolResponse::DoneInitialSetup)
+                            }
+                            ObtainQuorumInfoOP::OP_NAME => {
+                                info!("We have obtained the quorum information, calling client notify operation.");
+                                
+                                self.launch_client_notify_op(node)?;
+                                
+                                Ok(QuorumProtocolResponse::Nil)
+                            }
+                            _ => Ok(QuorumProtocolResponse::Nil)
+                        };
                     }
                     NodeStatusType::QuorumNode { current_state, .. } => {
                         if let ReplicaState::ObtainingInfo = current_state {
