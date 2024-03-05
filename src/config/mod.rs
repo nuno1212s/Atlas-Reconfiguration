@@ -1,7 +1,6 @@
 use atlas_common::{node_id::NodeId, crypto::signature::KeyPair, peer_addr::PeerAddr};
 use atlas_common::node_id::NodeType;
-
-use crate::message::NodeTriple;
+use atlas_communication::reconfiguration::NodeInfo;
 
 
 /// The configuration for the reconfiguration network.
@@ -15,5 +14,5 @@ pub struct ReconfigurableNetworkConfig {
     // Our address
     pub our_address: PeerAddr,
     // The nodes that we already know about (Boostrap nodes of the network)
-    pub known_nodes: Vec<NodeTriple>,
+    pub known_nodes: Vec<NodeInfo>,
 }

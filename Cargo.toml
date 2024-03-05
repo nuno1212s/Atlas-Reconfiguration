@@ -12,8 +12,10 @@ serialize_serde = ["atlas-common/serialize_serde", "atlas-communication/serializ
 default = ["serialize_serde"]
 
 [dependencies]
-anyhow = "1.0.75"
-thiserror = "1.0.50"
+anyhow = "1.0"
+thiserror = "1.0"
+getset = "0.1.2"
+
 atlas-common = { path = "../Atlas-Common" }
 atlas-metrics = { path = "../Atlas-Metrics" }
 atlas-communication = {path = "../Atlas-Communication"}
