@@ -1,12 +1,11 @@
-use atlas_common::crypto::threshold_crypto::{PrivateKeyPart, PublicKeyPart, PublicKeySet};
 use atlas_common::crypto::threshold_crypto::thold_crypto::dkg::DistributedKeyGenerator;
+use atlas_common::crypto::threshold_crypto::{PrivateKeyPart, PublicKeyPart, PublicKeySet};
 use atlas_common::node_id::NodeId;
 use atlas_core::reconfiguration_protocol::QuorumThresholdCrypto;
 
-
+mod network;
 mod ordered_bcast;
 mod threshold_negotiation;
-mod network;
 
 /// The threshold crypto struct, which will be used to
 /// handle all threshold crypto operations
@@ -32,9 +31,12 @@ pub struct ThresholdCrypto {
 }
 
 impl ThresholdCrypto {
-
     /// Initialize a threshold crypto instance from a distributed key generator
-    pub fn from_finished_dkg(our_id: NodeId, quorum: Vec<NodeId>, dkg: DistributedKeyGenerator) -> Self {
+    pub fn from_finished_dkg(
+        our_id: NodeId,
+        quorum: Vec<NodeId>,
+        dkg: DistributedKeyGenerator,
+    ) -> Self {
         let our_index = dkg.our_id();
 
         let (pk_set, sk_part) = dkg.finalize().expect("Failed to finalize DKG");

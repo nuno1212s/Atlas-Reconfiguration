@@ -4,9 +4,9 @@
 
 extern crate core;
 
+use getset::Getters;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
-use getset::Getters;
 
 use log::{debug, error, info, warn};
 #[cfg(feature = "serialize_serde")]
@@ -18,23 +18,27 @@ use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::Header;
-use atlas_communication::reconfiguration::{NetworkInformationProvider, ReconfigurationMessageHandler};
+use atlas_communication::reconfiguration::{
+    NetworkInformationProvider, ReconfigurationMessageHandler,
+};
 use atlas_communication::stub::{ModuleIncomingStub, RegularNetworkStub};
-use atlas_core::reconfiguration_protocol::{QuorumJoinCert, ReconfigResponse, ReconfigurableNodeTypes, ReconfigurationProtocol};
+use atlas_core::reconfiguration_protocol::{
+    QuorumJoinCert, ReconfigResponse, ReconfigurableNodeTypes, ReconfigurationProtocol,
+};
 use atlas_core::timeouts::{RqTimeout, TimeoutKind, Timeouts};
 
 use crate::config::ReconfigurableNetworkConfig;
 use crate::message::{ReconfData, ReconfigMessage, ReconfigurationMessage};
 use crate::network_reconfig::{GeneralNodeInfo, NetworkInfo, NetworkNodeState};
-use crate::quorum_config::{Node, QuorumObserver, QuorumView};
 use crate::quorum_config::network::QuorumConfigNetworkWrapper;
+use crate::quorum_config::{Node, QuorumObserver, QuorumView};
 
 pub mod config;
 pub mod message;
-pub mod network_reconfig;
 mod metrics;
-pub mod threshold_crypto;
+pub mod network_reconfig;
 pub mod quorum_config;
+pub mod threshold_crypto;
 
 const TIMEOUT_DUR: Duration = Duration::from_secs(3);
 
@@ -65,10 +69,12 @@ pub enum QuorumProtocolResponse {
     Nil,
 }
 
-
 /// A reconfigurable node, used to handle the reconfiguration of the network as a whole
 #[derive(Getters)]
-pub struct ReconfigurableNode<NT> where NT: Send + 'static {
+pub struct ReconfigurableNode<NT>
+where
+    NT: Send + 'static,
+{
     seq_gen: SeqNoGen,
     /// The reconfigurable node state
     node_state: ReconfigurableNodeState,
@@ -119,17 +125,29 @@ impl SeqNoGen {
     }
 }
 
-impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
+impl<NT> ReconfigurableNode<NT>
+where
+    NT: Send + 'static,
+{
     fn switch_state(&mut self, new_state: ReconfigurableNodeState) {
         match (&self.node_state, &new_state) {
-            (ReconfigurableNodeState::NetworkReconfigurationProtocol, ReconfigurableNodeState::QuorumReconfigurationProtocol) => {
+            (
+                ReconfigurableNodeState::NetworkReconfigurationProtocol,
+                ReconfigurableNodeState::QuorumReconfigurationProtocol,
+            ) => {
                 warn!("We have finished the network reconfiguration protocol, running the quorum reconfiguration message");
             }
-            (ReconfigurableNodeState::QuorumReconfigurationProtocol, ReconfigurableNodeState::Stable) => {
+            (
+                ReconfigurableNodeState::QuorumReconfigurationProtocol,
+                ReconfigurableNodeState::Stable,
+            ) => {
                 warn!("We have finished the quorum reconfiguration protocol, switching to stable.");
             }
             (_, _) => {
-                warn!("Illegal transition of states, {:?} to {:?}", self.node_state, new_state);
+                warn!(
+                    "Illegal transition of states, {:?} to {:?}",
+                    self.node_state, new_state
+                );
 
                 return;
             }
@@ -138,17 +156,28 @@ impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
         self.node_state = new_state;
     }
 
-    fn run(&mut self) -> Result<()> where NT: RegularNetworkStub<ReconfData> + 'static {
+    fn run(&mut self) -> Result<()>
+    where
+        NT: RegularNetworkStub<ReconfData> + 'static,
+    {
         loop {
             self.handle_local_messages();
 
-            debug!("Iterating the reconfiguration protocol, current state {:?}", self.node_state);
+            debug!(
+                "Iterating the reconfiguration protocol, current state {:?}",
+                self.node_state
+            );
 
             match self.node_state {
                 ReconfigurableNodeState::NetworkReconfigurationProtocol => {
-                    match self.node.iterate(&mut self.seq_gen, &self.network_node, &self.timeouts) {
+                    match self
+                        .node
+                        .iterate(&mut self.seq_gen, &self.network_node, &self.timeouts)
+                    {
                         NetworkProtocolResponse::Done => {
-                            self.switch_state(ReconfigurableNodeState::QuorumReconfigurationProtocol);
+                            self.switch_state(
+                                ReconfigurableNodeState::QuorumReconfigurationProtocol,
+                            );
                         }
                         NetworkProtocolResponse::Nil => {}
                     };
@@ -175,7 +204,10 @@ impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
                 }
             }
 
-            let message = self.network_node.incoming_stub().try_receive_messages(Some(Duration::from_millis(1000)))?;
+            let message = self
+                .network_node
+                .incoming_stub()
+                .try_receive_messages(Some(Duration::from_millis(1000)))?;
 
             message.into_iter().map(|message| {
                 let (header, message): (Header, ReconfigurationMessage) = message.into_inner();
@@ -217,7 +249,10 @@ impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
         }
     }
 
-    fn handle_local_messages(&mut self) where NT: RegularNetworkStub<ReconfData> + 'static {
+    fn handle_local_messages(&mut self)
+    where
+        NT: RegularNetworkStub<ReconfData> + 'static,
+    {
         while let Ok(received_message) = self.channel_rx.try_recv() {
             match received_message {
                 ReconfigMessage::TimeoutReceived(timeout) => {
@@ -235,10 +270,16 @@ impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
                                             continue;
                                         }
 
-                                        self.node.handle_timeout(&mut self.seq_gen, &self.network_node, &self.timeouts);
+                                        self.node.handle_timeout(
+                                            &mut self.seq_gen,
+                                            &self.network_node,
+                                            &self.timeouts,
+                                        );
                                     }
                                     ReconfigurableNodeState::QuorumReconfigurationProtocol => {
-                                        let nt_wrap = QuorumConfigNetworkWrapper::from(self.network_node.clone());
+                                        let nt_wrap = QuorumConfigNetworkWrapper::from(
+                                            self.network_node.clone(),
+                                        );
 
                                         self.node_type.handle_timeout(&nt_wrap, &self.timeouts);
                                     }
@@ -249,7 +290,9 @@ impl<NT> ReconfigurableNode<NT> where NT: Send + 'static {
 
                                 self.timeouts.cancel_reconfig_timeout(Some(*seq));
                             }
-                            _ => unreachable!("Received a timeout that is not a reconfiguration timeout")
+                            _ => unreachable!(
+                                "Received a timeout that is not a reconfiguration timeout"
+                            ),
                         }
                     }
                 }
@@ -267,20 +310,26 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocolHandle {
         Ok(Arc::new(NetworkInfo::init_from_config(config)))
     }
 
-    async fn initialize_protocol<NT>(information: Arc<Self::InformationProvider>,
-                                     node: Arc<NT>, timeouts: Timeouts,
-                                     node_type: ReconfigurableNodeTypes,
-                                     network_updater: ReconfigurationMessageHandler,
-                                     min_stable_node_count: usize)
-                                     -> Result<Self> where NT: RegularNetworkStub<Self::Serialization> + 'static, Self: Sized {
+    async fn initialize_protocol<NT>(
+        information: Arc<Self::InformationProvider>,
+        node: Arc<NT>,
+        timeouts: Timeouts,
+        node_type: ReconfigurableNodeTypes,
+        network_updater: ReconfigurationMessageHandler,
+        min_stable_node_count: usize,
+    ) -> Result<Self>
+    where
+        NT: RegularNetworkStub<Self::Serialization> + 'static,
+        Self: Sized,
+    {
         let general_info = GeneralNodeInfo::new(information.clone(), NetworkNodeState::Init);
 
         let quorum_view = Node::init_observer(information.bootstrap_nodes().clone());
 
         let our_info = information.own_node_info().clone();
 
-        let (channel_tx, channel_rx) = channel::new_bounded_sync(128,
-                                                                 Some("Reconfiguration message channel"));
+        let (channel_tx, channel_rx) =
+            channel::new_bounded_sync(128, Some("Reconfiguration message channel"));
 
         let cpy_obs = quorum_view.clone();
 
@@ -302,10 +351,14 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocolHandle {
 
                 loop {
                     if let Err(err) = reconfigurable_node.run() {
-                        error!("Error while running the reconfiguration protocol: {:?}", err);
+                        error!(
+                            "Error while running the reconfiguration protocol: {:?}",
+                            err
+                        );
                     }
                 }
-            }).expect("Failed to launch reconfiguration protocol thread");
+            })
+            .expect("Failed to launch reconfiguration protocol thread");
 
         let node_handle = ReconfigurableNodeProtocolHandle {
             network_info: information.clone(),
@@ -317,7 +370,9 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocolHandle {
     }
 
     fn handle_timeout(&self, timeouts: Vec<RqTimeout>) -> Result<ReconfigResponse> {
-        self.channel_tx.send_return(ReconfigMessage::TimeoutReceived(timeouts)).unwrap();
+        self.channel_tx
+            .send_return(ReconfigMessage::TimeoutReceived(timeouts))
+            .unwrap();
 
         Ok(ReconfigResponse::Running)
     }

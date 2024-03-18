@@ -1,7 +1,6 @@
-use atlas_common::{node_id::NodeId, crypto::signature::KeyPair, peer_addr::PeerAddr};
 use atlas_common::node_id::NodeType;
+use atlas_common::{crypto::signature::KeyPair, node_id::NodeId, peer_addr::PeerAddr};
 use atlas_communication::reconfiguration::NodeInfo;
-
 
 /// The configuration for the reconfiguration network.
 pub struct ReconfigurableNetworkConfig {

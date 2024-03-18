@@ -1,11 +1,18 @@
-use atlas_common::node_id::NodeId;
 use crate::message::{OperationMessage, OrderedBCastMessage};
+use atlas_common::node_id::NodeId;
 
 pub trait OrderedBCastNode<T> {
-
     /// Send a participating quorum message to a specific node
-    fn send_ordered_bcast_message(&self, message: OrderedBCastMessage<T>, target: NodeId) -> atlas_common::error::Result<()>;
+    fn send_ordered_bcast_message(
+        &self,
+        message: OrderedBCastMessage<T>,
+        target: NodeId,
+    ) -> atlas_common::error::Result<()>;
 
     /// Broadcast a participating quorum message to a set of nodes
-    fn broadcast_ordered_bcast_message(&self, message: OrderedBCastMessage<T>, target: impl Iterator<Item=NodeId>) -> std::result::Result<(), Vec<NodeId>>;
+    fn broadcast_ordered_bcast_message(
+        &self,
+        message: OrderedBCastMessage<T>,
+        target: impl Iterator<Item = NodeId>,
+    ) -> std::result::Result<(), Vec<NodeId>>;
 }

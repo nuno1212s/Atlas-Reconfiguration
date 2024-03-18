@@ -1,19 +1,25 @@
 mod network_bridge;
 
+use log::warn;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use log::warn;
 
-use atlas_common::crypto::threshold_crypto::thold_crypto::dkg::{Ack, DealerPart, DistributedKeyGenerator, DKGParams};
+use atlas_common::crypto::threshold_crypto::thold_crypto::dkg::{
+    Ack, DKGParams, DealerPart, DistributedKeyGenerator,
+};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_communication::message::{Header, StoredMessage};
 
-use crate::message::{OrderedBCastMessage, ReconfData, ReconfigurationMessage, ThresholdDKGArgs, ThresholdMessages};
 use crate::message::ThresholdMessages::DkgAck;
+use crate::message::{
+    OrderedBCastMessage, ReconfData, ReconfigurationMessage, ThresholdDKGArgs, ThresholdMessages,
+};
 use crate::threshold_crypto::network::ThresholdNetwork;
 use crate::threshold_crypto::ordered_bcast::OrderedBroadcast;
-use crate::threshold_crypto::threshold_negotiation::network_bridge::{DkgAckSendNode, DkgAckSendNodeRef, DkgDealerSendNode, DkgDealerSendNodeRef};
+use crate::threshold_crypto::threshold_negotiation::network_bridge::{
+    DkgAckSendNode, DkgAckSendNodeRef, DkgDealerSendNode, DkgDealerSendNodeRef,
+};
 
 /// The ordered dealer parts, decided by the leader
 struct OrderedDealerParts(Vec<(usize, DealerPart)>);
@@ -78,8 +84,11 @@ struct JoiningThresholdReplica {
 
 impl JoiningThresholdReplica {
     /// Initialize a distributed key generation protocol
-    pub fn initialize_dkg_protocol(our_id: NodeId, quorum: Vec<NodeId>, threshold: usize)
-                                       -> Result<Self> {
+    pub fn initialize_dkg_protocol(
+        our_id: NodeId,
+        quorum: Vec<NodeId>,
+        threshold: usize,
+    ) -> Result<Self> {
         let mut participating_nodes: BTreeMap<NodeId, usize> = Default::default();
 
         quorum.iter().enumerate().for_each(|(id, node)| {
@@ -88,7 +97,10 @@ impl JoiningThresholdReplica {
 
         let params = DKGParams::new(quorum.len(), threshold);
 
-        let participating_node_id = participating_nodes.get(&our_id).cloned().expect("Failed to get our own transaction ID?");
+        let participating_node_id = participating_nodes
+            .get(&our_id)
+            .cloned()
+            .expect("Failed to get our own transaction ID?");
 
         let (dkg, dealer) = DistributedKeyGenerator::new(params, participating_node_id)?;
 
@@ -101,7 +113,10 @@ impl JoiningThresholdReplica {
             participating_nodes,
             dkg,
             current_state: JoiningThresholdReplicaState::Init,
-            pending_messages: PendingMessages { pending_dealer_messages: Vec::new(), pending_ack_messages: Vec::new() },
+            pending_messages: PendingMessages {
+                pending_dealer_messages: Vec::new(),
+                pending_ack_messages: Vec::new(),
+            },
         })
     }
 
@@ -111,42 +126,73 @@ impl JoiningThresholdReplica {
     }
 
     fn iterate<NT>(&mut self, node: Arc<NT>) -> Result<()>
-        where NT: ThresholdNetwork + 'static {
+    where
+        NT: ThresholdNetwork + 'static,
+    {
         match &mut self.current_state {
             JoiningThresholdReplicaState::InitLeader => {
-                let trigger_dkg = ThresholdMessages::TriggerDKG(ThresholdDKGArgs::init_args(self.quorum.clone(), self.threshold, self.our_id));
+                let trigger_dkg = ThresholdMessages::TriggerDKG(ThresholdDKGArgs::init_args(
+                    self.quorum.clone(),
+                    self.threshold,
+                    self.our_id,
+                ));
 
-                let _ = node.broadcast_threshold_message(trigger_dkg, self.quorum.clone().into_iter());
+                let _ =
+                    node.broadcast_threshold_message(trigger_dkg, self.quorum.clone().into_iter());
 
                 self.current_state = JoiningThresholdReplicaState::Init;
             }
             JoiningThresholdReplicaState::Init => {
-                let ordered_bcast = OrderedBroadcast::<DealerPart>::init_ordered_bcast(self.our_id, self.leader, self.threshold, self.quorum.clone());
+                let ordered_bcast = OrderedBroadcast::<DealerPart>::init_ordered_bcast(
+                    self.our_id,
+                    self.leader,
+                    self.threshold,
+                    self.quorum.clone(),
+                );
 
-                let reconfig_msg_type = ThresholdMessages::DkgDealer(OrderedBCastMessage::Value(self.dealer_part.clone()));
+                let reconfig_msg_type = ThresholdMessages::DkgDealer(OrderedBCastMessage::Value(
+                    self.dealer_part.clone(),
+                ));
 
-                let _ = node.broadcast_threshold_message(reconfig_msg_type, self.quorum.clone().into_iter());
+                let _ = node.broadcast_threshold_message(
+                    reconfig_msg_type,
+                    self.quorum.clone().into_iter(),
+                );
 
                 self.current_state = JoiningThresholdReplicaState::PartExchange(ordered_bcast);
             }
-            JoiningThresholdReplicaState::PartExchange(dealer_part_exchange) if dealer_part_exchange.is_ready() => {
-                let ordered_bcast = OrderedBroadcast::<Vec<Ack>>::init_ordered_bcast(self.our_id, self.leader, self.threshold, self.quorum.clone());
+            JoiningThresholdReplicaState::PartExchange(dealer_part_exchange)
+                if dealer_part_exchange.is_ready() =>
+            {
+                let ordered_bcast = OrderedBroadcast::<Vec<Ack>>::init_ordered_bcast(
+                    self.our_id,
+                    self.leader,
+                    self.threshold,
+                    self.quorum.clone(),
+                );
 
-                let part_exchange = std::mem::replace(&mut self.current_state, JoiningThresholdReplicaState::AckExchange(ordered_bcast));
+                let part_exchange = std::mem::replace(
+                    &mut self.current_state,
+                    JoiningThresholdReplicaState::AckExchange(ordered_bcast),
+                );
 
                 let broadcast = part_exchange.unwrap_ordered_bcast_dealer();
 
                 let ordered_dealer_parts = broadcast.finish();
 
-                let acks = ordered_dealer_parts.into_iter().map(|dealer_part| {
-                    self.dkg.handle_part(dealer_part.author(), dealer_part)
-                }).collect::<Result<Vec<Ack>>>()?;
+                let acks = ordered_dealer_parts
+                    .into_iter()
+                    .map(|dealer_part| self.dkg.handle_part(dealer_part.author(), dealer_part))
+                    .collect::<Result<Vec<Ack>>>()?;
 
                 let thold_messages = ThresholdMessages::DkgAck(OrderedBCastMessage::Value(acks));
 
-                let _ = node.broadcast_threshold_message(thold_messages, self.quorum.clone().into_iter());
+                let _ = node
+                    .broadcast_threshold_message(thold_messages, self.quorum.clone().into_iter());
             }
-            JoiningThresholdReplicaState::AckExchange(ack_part_exchange) if ack_part_exchange.is_ready() => {
+            JoiningThresholdReplicaState::AckExchange(ack_part_exchange)
+                if ack_part_exchange.is_ready() =>
+            {
                 todo!()
             }
             _ => {
@@ -158,28 +204,32 @@ impl JoiningThresholdReplica {
     }
 
     fn handle_message<NT>(&mut self, node: &NT, header: Header, message: ThresholdMessages)
-        where NT: ThresholdNetwork + 'static {
+    where
+        NT: ThresholdNetwork + 'static,
+    {
         match &mut self.current_state {
             JoiningThresholdReplicaState::InitLeader => {
                 warn!("Received message while in InitLeader state (How is this possible if we are the leader and we ?)");
             }
             JoiningThresholdReplicaState::Init => {}
-            JoiningThresholdReplicaState::PartExchange(exchange) => {
-                match message {
-                    ThresholdMessages::TriggerDKG(dk) => {}
-                    ThresholdMessages::DkgDealer(dealer_part) => {
-                        exchange.handle_message(&DkgDealerSendNodeRef::from(node), header, dealer_part);
-                    }
-                    ThresholdMessages::DkgAck(ack_parts) => self.pending_messages.queue_message(header, ThresholdMessages::DkgAck(ack_parts)),
+            JoiningThresholdReplicaState::PartExchange(exchange) => match message {
+                ThresholdMessages::TriggerDKG(dk) => {}
+                ThresholdMessages::DkgDealer(dealer_part) => {
+                    exchange.handle_message(&DkgDealerSendNodeRef::from(node), header, dealer_part);
                 }
-            }
-            JoiningThresholdReplicaState::AckExchange(ack_part) => {
-                match message {
-                    ThresholdMessages::TriggerDKG(dk) => {}
-                    ThresholdMessages::DkgDealer(dealer_part) => self.pending_messages.queue_message(header, ThresholdMessages::DkgDealer(dealer_part)),
-                    ThresholdMessages::DkgAck(ack_parts) => ack_part.handle_message(&DkgAckSendNodeRef::from(node), header, ack_parts),
+                ThresholdMessages::DkgAck(ack_parts) => self
+                    .pending_messages
+                    .queue_message(header, ThresholdMessages::DkgAck(ack_parts)),
+            },
+            JoiningThresholdReplicaState::AckExchange(ack_part) => match message {
+                ThresholdMessages::TriggerDKG(dk) => {}
+                ThresholdMessages::DkgDealer(dealer_part) => self
+                    .pending_messages
+                    .queue_message(header, ThresholdMessages::DkgDealer(dealer_part)),
+                ThresholdMessages::DkgAck(ack_parts) => {
+                    ack_part.handle_message(&DkgAckSendNodeRef::from(node), header, ack_parts)
                 }
-            }
+            },
         }
     }
 }
@@ -188,12 +238,14 @@ impl PendingMessages {
     fn queue_message(&mut self, header: Header, message: ThresholdMessages) {
         match message {
             ThresholdMessages::DkgDealer(dealer_part) => {
-                self.pending_dealer_messages.push(StoredMessage::new(header, dealer_part));
+                self.pending_dealer_messages
+                    .push(StoredMessage::new(header, dealer_part));
             }
             ThresholdMessages::DkgAck(ack) => {
-                self.pending_ack_messages.push(StoredMessage::new(header, ack));
+                self.pending_ack_messages
+                    .push(StoredMessage::new(header, ack));
             }
-            _ => unreachable!("Invalid message type for pending messages")
+            _ => unreachable!("Invalid message type for pending messages"),
         }
     }
 }
@@ -202,14 +254,14 @@ impl JoiningThresholdReplicaState {
     fn unwrap_ordered_bcast_dealer(self) -> OrderedBroadcast<DealerPart> {
         match self {
             JoiningThresholdReplicaState::PartExchange(ordered_bcast) => ordered_bcast,
-            _ => unreachable!("Invalid state for ordered broadcast")
+            _ => unreachable!("Invalid state for ordered broadcast"),
         }
     }
 
     fn unwrap_ordered_bcast_acks(self) -> OrderedBroadcast<Vec<Ack>> {
         match self {
             JoiningThresholdReplicaState::AckExchange(ordered_bcast) => ordered_bcast,
-            _ => unreachable!("Invalid state for ordered broadcast")
+            _ => unreachable!("Invalid state for ordered broadcast"),
         }
     }
 }

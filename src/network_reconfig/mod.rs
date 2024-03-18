@@ -5,21 +5,28 @@ use futures::future::join_all;
 use futures::SinkExt;
 use log::{debug, error, info, warn};
 
-use atlas_common::{async_runtime as rt, quiet_unwrap};
 use atlas_common::channel::OneShotRx;
 use atlas_common::crypto::signature;
 use atlas_common::crypto::signature::{KeyPair, PublicKey};
 use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::ordering::SeqNo;
 use atlas_common::peer_addr::PeerAddr;
+use atlas_common::{async_runtime as rt, quiet_unwrap};
 use atlas_communication::byte_stub::connections::NetworkConnectionController;
 use atlas_communication::message::Header;
-use atlas_communication::reconfiguration::{NetworkInformationProvider, NetworkUpdateMessage, NodeInfo, ReconfigurationMessageHandler, ReconfigurationNetworkUpdate};
+use atlas_communication::reconfiguration::{
+    NetworkInformationProvider, NetworkUpdateMessage, NodeInfo, ReconfigurationMessageHandler,
+    ReconfigurationNetworkUpdate,
+};
 use atlas_communication::stub::{ModuleOutgoingStub, RegularNetworkStub};
 use atlas_core::timeouts::Timeouts;
 
 use crate::config::ReconfigurableNetworkConfig;
-use crate::message::{KnownNodesMessage, NetworkJoinCert, NetworkJoinRejectionReason, NetworkJoinResponseMessage, NetworkReconfigMessage, NetworkReconfigMessageType, ReconfData, ReconfigurationMessage, signatures};
+use crate::message::{
+    signatures, KnownNodesMessage, NetworkJoinCert, NetworkJoinRejectionReason,
+    NetworkJoinResponseMessage, NetworkReconfigMessage, NetworkReconfigMessageType, ReconfData,
+    ReconfigurationMessage,
+};
 use crate::{NetworkProtocolResponse, SeqNoGen, TIMEOUT_DUR};
 
 /// The reconfiguration module.
@@ -27,8 +34,8 @@ use crate::{NetworkProtocolResponse, SeqNoGen, TIMEOUT_DUR};
 /// Such as message definitions, important types and etc.
 ///
 /// This module will then be used by the parts of the system which must be reconfigurable
-pub type NetworkPredicate = fn(Arc<NetworkInfo>, NodeInfo) -> OneShotRx<Option<NetworkJoinRejectionReason>>;
-
+pub type NetworkPredicate =
+    fn(Arc<NetworkInfo>, NodeInfo) -> OneShotRx<Option<NetworkJoinRejectionReason>>;
 
 /// Our current view of the network and the information about our own node
 /// This is the node data for the network information. This does not
@@ -63,7 +70,12 @@ impl NetworkInfo {
         let boostrap_nodes = known_nodes.iter().map(|triple| triple.node_id()).collect();
 
         NetworkInfo {
-            node_info: NodeInfo::new(node_id, node_type, key_pair.public_key().into(), our_address.clone()),
+            node_info: NodeInfo::new(
+                node_id,
+                node_type,
+                key_pair.public_key().into(),
+                our_address.clone(),
+            ),
             key_pair: Arc::new(key_pair),
             bootstrap_nodes: boostrap_nodes,
             known_nodes: RwLock::new(KnownNodes::from_known_list(known_nodes)),
@@ -122,15 +134,25 @@ impl NetworkInfo {
 
     /// Handle a node having introduced itself to us by inserting it into our known nodes
     pub(crate) fn handle_node_introduced(&self, node: NodeInfo) -> bool {
-        debug!("Handling a node having been introduced {:?}. Handling it", node);
+        debug!(
+            "Handling a node having been introduced {:?}. Handling it",
+            node
+        );
 
         let mut write_guard = self.known_nodes.write().unwrap();
 
         Self::handle_single_node_introduced(&mut *write_guard, node)
     }
 
-    pub(crate) fn is_valid_network_hello(&self, node: NodeInfo, certificates: Vec<NetworkJoinCert>) -> bool {
-        debug!("Received a node hello message from node {:?}. Handling it", node);
+    pub(crate) fn is_valid_network_hello(
+        &self,
+        node: NodeInfo,
+        certificates: Vec<NetworkJoinCert>,
+    ) -> bool {
+        debug!(
+            "Received a node hello message from node {:?}. Handling it",
+            node
+        );
 
         for (from, signature) in &certificates {
             let from_pk = self.get_pk_for_node(from);
@@ -161,16 +183,21 @@ impl NetworkInfo {
             return false;
         }
 
-
         return true;
     }
 
     /// Handle us having received a successfull network join response, with the list of known nodes
     /// Returns a list of nodes that we didn't know before, but that have now been added
-    pub(crate) fn handle_received_network_view(&self, known_nodes: KnownNodesMessage) -> Vec<NodeInfo> {
+    pub(crate) fn handle_received_network_view(
+        &self,
+        known_nodes: KnownNodesMessage,
+    ) -> Vec<NodeInfo> {
         let mut write_guard = self.known_nodes.write().unwrap();
 
-        debug!("Updating our known nodes list with the received list {:?}", known_nodes);
+        debug!(
+            "Updating our known nodes list with the received list {:?}",
+            known_nodes
+        );
 
         let mut new_nodes = Vec::with_capacity(known_nodes.known_nodes().len());
 
@@ -197,7 +224,10 @@ impl NetworkInfo {
 
             true
         } else {
-            debug!("Node {:?} has already been introduced to us. Ignoring",node);
+            debug!(
+                "Node {:?} has already been introduced to us. Ignoring",
+                node
+            );
 
             false
         }
@@ -224,17 +254,22 @@ impl NetworkInfo {
             }
         }
 
-        let signature = signatures::create_node_triple_signature(&node_id, &*self.key_pair).expect("Failed to sign node triple");
+        let signature = signatures::create_node_triple_signature(&node_id, &*self.key_pair)
+            .expect("Failed to sign node triple");
 
         let read_guard = self.known_nodes.read().unwrap();
 
-        return NetworkJoinResponseMessage::Successful(signature, KnownNodesMessage::from(&*read_guard));
+        return NetworkJoinResponseMessage::Successful(
+            signature,
+            KnownNodesMessage::from(&*read_guard),
+        );
     }
 
     pub fn get_pk_for_node(&self, node: &NodeId) -> Option<PublicKey> {
         self.known_nodes
             .read()
-            .unwrap().node_info()
+            .unwrap()
+            .node_info()
             .get(node)
             .map(|info| info.public_key())
             .cloned()
@@ -274,9 +309,7 @@ impl NetworkInfo {
             .unwrap()
             .node_info()
             .iter()
-            .map(|(node_id, info)| {
-                (*node_id, info.node_type().clone())
-            })
+            .map(|(node_id, info)| (*node_id, info.node_type().clone()))
             .collect()
     }
 
@@ -299,7 +332,12 @@ impl NetworkInformationProvider for NetworkInfo {
     }
 
     fn get_node_info(&self, node: &NodeId) -> Option<NodeInfo> {
-        self.known_nodes.read().unwrap().node_info().get(node).cloned()
+        self.known_nodes
+            .read()
+            .unwrap()
+            .node_info()
+            .get(node)
+            .cloned()
     }
 }
 
@@ -341,9 +379,16 @@ pub enum NetworkNodeState {
     /// We have broadcast the join request to the known nodes and are waiting for their responses
     /// Which contain the network information. Afterwards, we will attempt to introduce ourselves to all
     /// nodes in the network (if there are more nodes than the known boostrap nodes)
-    JoiningNetwork { contacted: usize, responded: BTreeSet<NodeId>, certificates: Vec<NetworkJoinCert> },
+    JoiningNetwork {
+        contacted: usize,
+        responded: BTreeSet<NodeId>,
+        certificates: Vec<NetworkJoinCert>,
+    },
     /// We are currently introducing ourselves to the network (and attempting to acquire all known nodes)
-    IntroductionPhase { contacted: usize, responded: BTreeSet<NodeId> },
+    IntroductionPhase {
+        contacted: usize,
+        responded: BTreeSet<NodeId>,
+    },
     /// A stable member of the network, up to date with the current membership
     StableMember,
     /// We are currently leaving the network
@@ -361,15 +406,28 @@ pub struct GeneralNodeInfo {
 
 impl GeneralNodeInfo {
     /// Attempt to iterate and move our current state forward
-    pub(super) fn iterate<NT>(&mut self, seq: &mut SeqNoGen, network_node: &Arc<NT>, timeouts: &Timeouts) -> NetworkProtocolResponse
-        where NT: RegularNetworkStub<ReconfData> + 'static {
+    pub(super) fn iterate<NT>(
+        &mut self,
+        seq: &mut SeqNoGen,
+        network_node: &Arc<NT>,
+        timeouts: &Timeouts,
+    ) -> NetworkProtocolResponse
+    where
+        NT: RegularNetworkStub<ReconfData> + 'static,
+    {
         match &mut self.current_state {
             NetworkNodeState::Init => {
-                let known_nodes: Vec<NodeId> = self.network_view.known_nodes().into_iter()
-                    .filter(|node| *node != self.network_view.node_id()).collect();
+                let known_nodes: Vec<NodeId> = self
+                    .network_view
+                    .known_nodes()
+                    .into_iter()
+                    .filter(|node| *node != self.network_view.node_id())
+                    .collect();
 
-                let join_req = NetworkReconfigMessage::new(seq.next_seq(),
-                                                           NetworkReconfigMessageType::NetworkJoinRequest(self.network_view.node_triple()));
+                let join_req = NetworkReconfigMessage::new(
+                    seq.next_seq(),
+                    NetworkReconfigMessageType::NetworkJoinRequest(self.network_view.node_triple()),
+                );
 
                 let join_message = ReconfigurationMessage::NetworkReconfig(join_req);
 
@@ -383,9 +441,14 @@ impl GeneralNodeInfo {
                 let mut node_results = Vec::new();
 
                 for node in &known_nodes {
-                    info!("{:?} // Connecting to node {:?}", self.network_view.node_id(), node);
+                    info!(
+                        "{:?} // Connecting to node {:?}",
+                        self.network_view.node_id(),
+                        node
+                    );
 
-                    let mut node_connection_results = network_node.connections().connect_to_node(*node);
+                    let mut node_connection_results =
+                        network_node.connections().connect_to_node(*node);
 
                     node_results.push((*node, node_connection_results));
                 }
@@ -399,14 +462,27 @@ impl GeneralNodeInfo {
                         }
                     }
 
-                    info!("{:?} // Connected to node {:?}", self.network_view.node_id(), node);
+                    info!(
+                        "{:?} // Connected to node {:?}",
+                        self.network_view.node_id(),
+                        node
+                    );
                 }
 
-                let res = network_node.outgoing_stub().broadcast_signed(join_message, known_nodes.clone().into_iter());
+                let res = network_node
+                    .outgoing_stub()
+                    .broadcast_signed(join_message, known_nodes.clone().into_iter());
 
-                info!("Broadcasting reconfiguration network join message to known nodes {:?}, {:?}", known_nodes, res);
+                info!(
+                    "Broadcasting reconfiguration network join message to known nodes {:?}, {:?}",
+                    known_nodes, res
+                );
 
-                timeouts.timeout_reconfig_request(TIMEOUT_DUR, ((contacted * 2 / 3) + 1) as u32, seq.curr_seq());
+                timeouts.timeout_reconfig_request(
+                    TIMEOUT_DUR,
+                    ((contacted * 2 / 3) + 1) as u32,
+                    seq.curr_seq(),
+                );
 
                 self.current_state = NetworkNodeState::JoiningNetwork {
                     contacted,
@@ -425,15 +501,29 @@ impl GeneralNodeInfo {
         NetworkProtocolResponse::Nil
     }
 
-    pub(super) fn handle_timeout<NT>(&mut self, seq_gen: &mut SeqNoGen, network_node: &Arc<NT>, timeouts: &Timeouts) -> NetworkProtocolResponse
-        where NT: RegularNetworkStub<ReconfData> + 'static
+    pub(super) fn handle_timeout<NT>(
+        &mut self,
+        seq_gen: &mut SeqNoGen,
+        network_node: &Arc<NT>,
+        timeouts: &Timeouts,
+    ) -> NetworkProtocolResponse
+    where
+        NT: RegularNetworkStub<ReconfData> + 'static,
     {
         match &mut self.current_state {
-            NetworkNodeState::JoiningNetwork { contacted, responded, certificates } => {
+            NetworkNodeState::JoiningNetwork {
+                contacted,
+                responded,
+                certificates,
+            } => {
                 info!("Joining network timeout triggered");
 
-                let known_nodes: Vec<NodeId> = self.network_view.known_nodes().into_iter()
-                    .filter(|node| *node != self.network_view.node_id()).collect();
+                let known_nodes: Vec<NodeId> = self
+                    .network_view
+                    .known_nodes()
+                    .into_iter()
+                    .filter(|node| *node != self.network_view.node_id())
+                    .collect();
 
                 let contacted = known_nodes.len();
 
@@ -451,9 +541,14 @@ impl GeneralNodeInfo {
                         continue;
                     }
 
-                    info!("{:?} // Connecting to node {:?}", self.network_view.node_id(), node);
+                    info!(
+                        "{:?} // Connecting to node {:?}",
+                        self.network_view.node_id(),
+                        node
+                    );
 
-                    let mut node_connection_results = network_node.connections().connect_to_node(*node);
+                    let mut node_connection_results =
+                        network_node.connections().connect_to_node(*node);
 
                     node_results.push((*node, node_connection_results));
                 }
@@ -468,16 +563,24 @@ impl GeneralNodeInfo {
                     }
                 }
 
-                let join_req = NetworkReconfigMessage::new(seq_gen.next_seq(),
-                                                           NetworkReconfigMessageType::NetworkJoinRequest(self.network_view.node_triple()));
+                let join_req = NetworkReconfigMessage::new(
+                    seq_gen.next_seq(),
+                    NetworkReconfigMessageType::NetworkJoinRequest(self.network_view.node_triple()),
+                );
 
                 let join_message = ReconfigurationMessage::NetworkReconfig(join_req);
 
                 info!("Received timeout, broadcasting reconfiguration network join message to known nodes {:?}", known_nodes);
 
-                let _ = network_node.outgoing_stub().broadcast_signed(join_message, known_nodes.into_iter());
+                let _ = network_node
+                    .outgoing_stub()
+                    .broadcast_signed(join_message, known_nodes.into_iter());
 
-                timeouts.timeout_reconfig_request(TIMEOUT_DUR, (contacted / 2 + 1) as u32, seq_gen.curr_seq());
+                timeouts.timeout_reconfig_request(
+                    TIMEOUT_DUR,
+                    (contacted / 2 + 1) as u32,
+                    seq_gen.curr_seq(),
+                );
 
                 self.current_state = NetworkNodeState::JoiningNetwork {
                     contacted,
@@ -496,63 +599,124 @@ impl GeneralNodeInfo {
         NetworkProtocolResponse::Nil
     }
 
-    pub(super) fn is_response_to_request(&self, seq_gen: &SeqNoGen, header: &Header, seq: SeqNo, message: &NetworkReconfigMessageType) -> bool {
+    pub(super) fn is_response_to_request(
+        &self,
+        seq_gen: &SeqNoGen,
+        header: &Header,
+        seq: SeqNo,
+        message: &NetworkReconfigMessageType,
+    ) -> bool {
         match message {
             NetworkReconfigMessageType::NetworkJoinResponse(_) => true,
             NetworkReconfigMessageType::NetworkHelloReply(_) => true,
-            _ => false
+            _ => false,
         }
     }
 
-    pub(super) fn handle_network_reconfig_msg<NT>(&mut self, seq_gen: &mut SeqNoGen, network_node: &Arc<NT>, reconf_msg_handler: &ReconfigurationMessageHandler, timeouts: &Timeouts, header: Header, message: NetworkReconfigMessage) -> NetworkProtocolResponse
-        where NT: RegularNetworkStub<ReconfData> + 'static {
+    pub(super) fn handle_network_reconfig_msg<NT>(
+        &mut self,
+        seq_gen: &mut SeqNoGen,
+        network_node: &Arc<NT>,
+        reconf_msg_handler: &ReconfigurationMessageHandler,
+        timeouts: &Timeouts,
+        header: Header,
+        message: NetworkReconfigMessage,
+    ) -> NetworkProtocolResponse
+    where
+        NT: RegularNetworkStub<ReconfData> + 'static,
+    {
         let (seq, message) = message.into_inner();
 
         match &mut self.current_state {
-            NetworkNodeState::JoiningNetwork { contacted, responded, certificates } => {
+            NetworkNodeState::JoiningNetwork {
+                contacted,
+                responded,
+                certificates,
+            } => {
                 // Avoid accepting double answers
 
                 return match message {
                     NetworkReconfigMessageType::NetworkJoinRequest(join_request) => {
-                        info!("Received a network join request from {:?} while joining the network", header.from());
+                        info!(
+                            "Received a network join request from {:?} while joining the network",
+                            header.from()
+                        );
 
-                        self.handle_join_request(network_node, reconf_msg_handler, header, seq, join_request)
+                        self.handle_join_request(
+                            network_node,
+                            reconf_msg_handler,
+                            header,
+                            seq,
+                            join_request,
+                        )
                     }
                     NetworkReconfigMessageType::NetworkJoinResponse(join_response) => {
                         if responded.insert(header.from()) {
                             match join_response {
-                                NetworkJoinResponseMessage::Successful(signature, network_information) => {
+                                NetworkJoinResponseMessage::Successful(
+                                    signature,
+                                    network_information,
+                                ) => {
                                     info!("We were accepted into the network by the node {:?}, current certificate count {:?}", header.from(), certificates.len());
 
                                     timeouts.cancel_reconfig_timeout(Some(seq));
 
-                                    let unknown_nodes = self.network_view.handle_received_network_view(network_information);
+                                    let unknown_nodes = self
+                                        .network_view
+                                        .handle_received_network_view(network_information);
 
                                     for node_id in unknown_nodes {
-                                        if !network_node.connections().has_connection(&node_id.node_id()) {
-                                            match (self.network_view.own_node_info().node_type(), node_id.node_type()) {
-                                                (NodeType::Client, NodeType::Client) => { continue; }
+                                        if !network_node
+                                            .connections()
+                                            .has_connection(&node_id.node_id())
+                                        {
+                                            match (
+                                                self.network_view.own_node_info().node_type(),
+                                                node_id.node_type(),
+                                            ) {
+                                                (NodeType::Client, NodeType::Client) => {
+                                                    continue;
+                                                }
                                                 _ => {}
                                             }
 
                                             warn!("{:?} // Connecting to node {:?} as we don't know it yet", self.network_view.node_id(), node_id);
-                                            network_node.connections().connect_to_node(node_id.node_id());
+                                            network_node
+                                                .connections()
+                                                .connect_to_node(node_id.node_id());
                                         }
                                     }
 
                                     certificates.push((header.from(), signature));
 
                                     if certificates.len() >= (*contacted * 2 / 3) + 1 {
-                                        let known_nodes = self.network_view.known_nodes().into_iter()
-                                            .filter(|node| *node != self.network_view.node_id()).collect::<Vec<_>>();
+                                        let known_nodes = self
+                                            .network_view
+                                            .known_nodes()
+                                            .into_iter()
+                                            .filter(|node| *node != self.network_view.node_id())
+                                            .collect::<Vec<_>>();
 
                                         warn!("We have enough certificates to join the network {}, moving to introduction phase. Broadcasting Hello Request to {:?}", certificates.len(), known_nodes);
 
-                                        let hello_request = NetworkReconfigMessageType::NetworkHelloRequest(self.network_view.node_triple(), certificates.clone());
+                                        let hello_request =
+                                            NetworkReconfigMessageType::NetworkHelloRequest(
+                                                self.network_view.node_triple(),
+                                                certificates.clone(),
+                                            );
 
-                                        let introduction_message = ReconfigurationMessage::NetworkReconfig(NetworkReconfigMessage::new(seq_gen.next_seq(), hello_request));
+                                        let introduction_message =
+                                            ReconfigurationMessage::NetworkReconfig(
+                                                NetworkReconfigMessage::new(
+                                                    seq_gen.next_seq(),
+                                                    hello_request,
+                                                ),
+                                            );
 
-                                        let _ = network_node.outgoing_stub().broadcast_signed(introduction_message, known_nodes.into_iter());
+                                        let _ = network_node.outgoing_stub().broadcast_signed(
+                                            introduction_message,
+                                            known_nodes.into_iter(),
+                                        );
 
                                         self.current_state = NetworkNodeState::IntroductionPhase {
                                             contacted: 0,
@@ -561,7 +725,11 @@ impl GeneralNodeInfo {
                                     }
                                 }
                                 NetworkJoinResponseMessage::Rejected(rejection_reason) => {
-                                    error!("We were rejected from the network: {:?} by the node {:?}", rejection_reason, header.from());
+                                    error!(
+                                        "We were rejected from the network: {:?} by the node {:?}",
+                                        rejection_reason,
+                                        header.from()
+                                    );
                                 }
                             }
                         } else {
@@ -570,8 +738,18 @@ impl GeneralNodeInfo {
 
                         NetworkProtocolResponse::Nil
                     }
-                    NetworkReconfigMessageType::NetworkHelloRequest(hello_request, confirmations) => {
-                        self.handle_hello_request(network_node, reconf_msg_handler, header, seq, hello_request, confirmations);
+                    NetworkReconfigMessageType::NetworkHelloRequest(
+                        hello_request,
+                        confirmations,
+                    ) => {
+                        self.handle_hello_request(
+                            network_node,
+                            reconf_msg_handler,
+                            header,
+                            seq,
+                            hello_request,
+                            confirmations,
+                        );
 
                         NetworkProtocolResponse::Nil
                     }
@@ -582,31 +760,60 @@ impl GeneralNodeInfo {
                 };
             }
             NetworkNodeState::IntroductionPhase {
-                contacted, responded
+                contacted,
+                responded,
             } => {
                 match message {
                     NetworkReconfigMessageType::NetworkJoinRequest(join_request) => {
-                        return self.handle_join_request(network_node, reconf_msg_handler, header, seq, join_request);
+                        return self.handle_join_request(
+                            network_node,
+                            reconf_msg_handler,
+                            header,
+                            seq,
+                            join_request,
+                        );
                     }
                     NetworkReconfigMessageType::NetworkJoinResponse(_) => {
                         // Ignored, we are already a stable member of the network
                     }
                     NetworkReconfigMessageType::NetworkHelloRequest(sender_info, confirmations) => {
-                        self.handle_hello_request(network_node, reconf_msg_handler, header, seq, sender_info, confirmations)
+                        self.handle_hello_request(
+                            network_node,
+                            reconf_msg_handler,
+                            header,
+                            seq,
+                            sender_info,
+                            confirmations,
+                        )
                     }
                     NetworkReconfigMessageType::NetworkHelloReply(known_nodes) => {
                         if responded.insert(header.from()) {
-                            let unknown_nodes = self.network_view.handle_received_network_view(known_nodes);
+                            let unknown_nodes =
+                                self.network_view.handle_received_network_view(known_nodes);
 
                             for node_id in unknown_nodes {
-                                if !network_node.connections().has_connection(&node_id.node_id()) {
-                                    match (self.network_view.own_node_info().node_type(), node_id.node_type()) {
-                                        (NodeType::Client, NodeType::Client) => { continue; }
+                                if !network_node
+                                    .connections()
+                                    .has_connection(&node_id.node_id())
+                                {
+                                    match (
+                                        self.network_view.own_node_info().node_type(),
+                                        node_id.node_type(),
+                                    ) {
+                                        (NodeType::Client, NodeType::Client) => {
+                                            continue;
+                                        }
                                         _ => {}
                                     }
-                                    warn!("{:?} // Connecting to node {:?} as we don't know it yet", self.network_view.node_id(), node_id);
+                                    warn!(
+                                        "{:?} // Connecting to node {:?} as we don't know it yet",
+                                        self.network_view.node_id(),
+                                        node_id
+                                    );
 
-                                    network_node.connections().connect_to_node(node_id.node_id());
+                                    network_node
+                                        .connections()
+                                        .connect_to_node(node_id.node_id());
                                 }
                             }
                         }
@@ -624,13 +831,26 @@ impl GeneralNodeInfo {
             NetworkNodeState::StableMember => {
                 match message {
                     NetworkReconfigMessageType::NetworkJoinRequest(join_request) => {
-                        return self.handle_join_request(network_node, reconf_msg_handler, header, seq, join_request);
+                        return self.handle_join_request(
+                            network_node,
+                            reconf_msg_handler,
+                            header,
+                            seq,
+                            join_request,
+                        );
                     }
                     NetworkReconfigMessageType::NetworkJoinResponse(_) => {
                         // Ignored, we are already a stable member of the network
                     }
                     NetworkReconfigMessageType::NetworkHelloRequest(sender_info, confirmations) => {
-                        self.handle_hello_request(network_node, reconf_msg_handler, header, seq, sender_info, confirmations);
+                        self.handle_hello_request(
+                            network_node,
+                            reconf_msg_handler,
+                            header,
+                            seq,
+                            sender_info,
+                            confirmations,
+                        );
                     }
                     NetworkReconfigMessageType::NetworkHelloReply(_) => {
                         // Ignored, we are already a stable member of the network
@@ -649,9 +869,21 @@ impl GeneralNodeInfo {
         }
     }
 
-    pub(super) fn handle_hello_request<NT>(&self, network_node: &Arc<NT>, reconf_msg_handler: &ReconfigurationMessageHandler, header: Header, seq: SeqNo, node: NodeInfo, confirmations: Vec<NetworkJoinCert>)
-        where NT: RegularNetworkStub<ReconfData> + 'static {
-        if self.network_view.is_valid_network_hello(node.clone(), confirmations) {
+    pub(super) fn handle_hello_request<NT>(
+        &self,
+        network_node: &Arc<NT>,
+        reconf_msg_handler: &ReconfigurationMessageHandler,
+        header: Header,
+        seq: SeqNo,
+        node: NodeInfo,
+        confirmations: Vec<NetworkJoinCert>,
+    ) where
+        NT: RegularNetworkStub<ReconfData> + 'static,
+    {
+        if self
+            .network_view
+            .is_valid_network_hello(node.clone(), confirmations)
+        {
             info!("Received a node hello message from node {:?} with enough certificates. Adding it to our known nodes", node);
 
             let known_nodes = {
@@ -660,26 +892,49 @@ impl GeneralNodeInfo {
                 KnownNodesMessage::from(&*read_guard)
             };
 
-            let hello_reply_message = NetworkReconfigMessage::new(seq, NetworkReconfigMessageType::NetworkHelloReply(known_nodes));
+            let hello_reply_message = NetworkReconfigMessage::new(
+                seq,
+                NetworkReconfigMessageType::NetworkHelloReply(known_nodes),
+            );
 
-            network_node.outgoing_stub().send_signed(ReconfigurationMessage::NetworkReconfig(hello_reply_message), header.from(), true);
+            network_node.outgoing_stub().send_signed(
+                ReconfigurationMessage::NetworkReconfig(hello_reply_message),
+                header.from(),
+                true,
+            );
 
             if self.network_view.handle_node_introduced(node.clone()) {
                 info!("Node {:?} has joined the network and we hadn't seen it before, sending network update to the network layer", node.node_id());
 
                 let public_key = self.network_view.get_pk_for_node(&node.node_id()).unwrap();
 
-                let connection_permitted = NetworkUpdateMessage::NodeConnectionPermitted(node.node_id(), node.node_type(), public_key);
+                let connection_permitted = NetworkUpdateMessage::NodeConnectionPermitted(
+                    node.node_id(),
+                    node.node_type(),
+                    public_key,
+                );
 
                 reconf_msg_handler.send_reconfiguration_update(connection_permitted);
             }
         } else {
-            error!("Received a network hello request from {:?} but it was not valid", header.from());
+            error!(
+                "Received a network hello request from {:?} but it was not valid",
+                header.from()
+            );
         }
     }
 
-    pub(super) fn handle_join_request<NT>(&self, network_node: &Arc<NT>, reconf_msg_handler: &ReconfigurationMessageHandler, header: Header, seq: SeqNo, node: NodeInfo) -> NetworkProtocolResponse
-        where NT: RegularNetworkStub<ReconfData> + 'static {
+    pub(super) fn handle_join_request<NT>(
+        &self,
+        network_node: &Arc<NT>,
+        reconf_msg_handler: &ReconfigurationMessageHandler,
+        header: Header,
+        seq: SeqNo,
+        node: NodeInfo,
+    ) -> NetworkProtocolResponse
+    where
+        NT: RegularNetworkStub<ReconfData> + 'static,
+    {
         let network = network_node.clone();
 
         let reconf_msg_handler = reconf_msg_handler.clone();
@@ -693,20 +948,29 @@ impl GeneralNodeInfo {
 
             let result = network_view.can_introduce_node(triple.clone()).await;
 
-            let message = NetworkReconfigMessage::new(seq, NetworkReconfigMessageType::NetworkJoinResponse(result));
+            let message = NetworkReconfigMessage::new(
+                seq,
+                NetworkReconfigMessageType::NetworkJoinResponse(result),
+            );
 
             let reconfig_message = ReconfigurationMessage::NetworkReconfig(message);
 
             debug!("Responding to network join request a network join response to {:?} with message {:?}", target, reconfig_message);
 
-            let _ = network.outgoing_stub().send_signed(reconfig_message, target, true);
+            let _ = network
+                .outgoing_stub()
+                .send_signed(reconfig_message, target, true);
 
             if network_view.handle_node_introduced(triple.clone()) {
                 info!("Node {:?} has joined the network and we hadn't seen it before, sending network update to the network layer", triple.node_id());
 
                 let public_key = network_view.get_pk_for_node(&triple.node_id()).unwrap();
 
-                let connection_permitted = NetworkUpdateMessage::NodeConnectionPermitted(triple.node_id(), triple.node_type(), public_key);
+                let connection_permitted = NetworkUpdateMessage::NodeConnectionPermitted(
+                    triple.node_id(),
+                    triple.node_type(),
+                    public_key,
+                );
 
                 reconf_msg_handler.send_reconfiguration_update(connection_permitted);
             }
@@ -716,6 +980,9 @@ impl GeneralNodeInfo {
     }
 
     pub fn new(network_view: Arc<NetworkInfo>, current_state: NetworkNodeState) -> Self {
-        Self { network_view, current_state }
+        Self {
+            network_view,
+            current_state,
+        }
     }
 }

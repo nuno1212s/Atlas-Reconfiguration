@@ -3,8 +3,8 @@ pub mod network;
 use std::collections::{BTreeSet, VecDeque};
 use std::sync::Arc;
 
-use log::{debug, warn};
 use atlas_common::crypto::hash::Digest;
+use log::{debug, warn};
 
 use atlas_common::node_id::NodeId;
 use atlas_communication::message::{Header, StoredMessage};
@@ -20,7 +20,6 @@ struct PendingOrderedBCastMessages<T> {
     // Pending order vote messages, to be processed when ready
     pending_order_vote: VecDeque<StoredMessage<OrderedBCastMessage<T>>>,
 }
-
 
 /// In an ordered fashion, we broadcast a message to all members of the quorum
 ///
@@ -68,12 +67,17 @@ pub(crate) enum OrderedBCastPhase<T> {
     Done(Vec<T>),
 }
 
-impl<T> OrderedBroadcast<T> where T: Clone {
+impl<T> OrderedBroadcast<T>
+where
+    T: Clone,
+{
     /// Initialize a new ordered broadcast instance
-    pub fn init_ordered_bcast(our_id: NodeId,
-                              leader: NodeId,
-                              threshold: usize,
-                              members: Vec<NodeId>,) -> Self {
+    pub fn init_ordered_bcast(
+        our_id: NodeId,
+        leader: NodeId,
+        threshold: usize,
+        members: Vec<NodeId>,
+    ) -> Self {
         Self {
             our_id,
             leader,
@@ -95,8 +99,14 @@ impl<T> OrderedBroadcast<T> where T: Clone {
         }
     }
 
-    pub(crate) fn handle_message<NT>(&mut self, node: &NT, header: Header, bcast_message: OrderedBCastMessage<T>)
-        where NT: OrderedBCastNode<T> {
+    pub(crate) fn handle_message<NT>(
+        &mut self,
+        node: &NT,
+        header: Header,
+        bcast_message: OrderedBCastMessage<T>,
+    ) where
+        NT: OrderedBCastNode<T>,
+    {
         match &mut self.phase {
             OrderedBCastPhase::CollectionPhase(received, voted) => {
                 match bcast_message {
@@ -125,21 +135,23 @@ impl<T> OrderedBroadcast<T> where T: Clone {
                     }
                 }
             }
-            OrderedBCastPhase::AwaitingOrder if header.from() == self.leader => {
-                match bcast_message {
-                    OrderedBCastMessage::Value(_) => {}
-                    OrderedBCastMessage::Order(order) => {
-                        self.phase = OrderedBCastPhase::VotingPhase(order, BTreeSet::new());
+            OrderedBCastPhase::AwaitingOrder if header.from() == self.leader => match bcast_message
+            {
+                OrderedBCastMessage::Value(_) => {}
+                OrderedBCastMessage::Order(order) => {
+                    self.phase = OrderedBCastPhase::VotingPhase(order, BTreeSet::new());
 
-                        self.vote_on_order(node, header.digest().clone());
-                    }
-                    OrderedBCastMessage::OrderVote(_) => {
-                        self.pending_message.queue_message(header, bcast_message);
-                    }
+                    self.vote_on_order(node, header.digest().clone());
                 }
-            }
+                OrderedBCastMessage::OrderVote(_) => {
+                    self.pending_message.queue_message(header, bcast_message);
+                }
+            },
             OrderedBCastPhase::AwaitingOrder => {
-                warn!("Received message from non-leader node {:?} while awaiting order", header.from());
+                warn!(
+                    "Received message from non-leader node {:?} while awaiting order",
+                    header.from()
+                );
             }
             OrderedBCastPhase::VotingPhase(order, received_votes) => {
                 if received_votes.insert(header.from()) {
@@ -149,19 +161,32 @@ impl<T> OrderedBroadcast<T> where T: Clone {
                 }
             }
             OrderedBCastPhase::Done(order) => {
-                debug!("Received message from node {:?} after broadcast was done", header.from());
+                debug!(
+                    "Received message from node {:?} after broadcast was done",
+                    header.from()
+                );
             }
         }
     }
 
     fn decide_and_bcast_order<NT>(&mut self, node: &NT, order: Vec<T>)
-        where NT: OrderedBCastNode<T> {
-        node.broadcast_ordered_bcast_message(OrderedBCastMessage::Order(order), self.members.clone().into_iter());
+    where
+        NT: OrderedBCastNode<T>,
+    {
+        node.broadcast_ordered_bcast_message(
+            OrderedBCastMessage::Order(order),
+            self.members.clone().into_iter(),
+        );
     }
 
     fn vote_on_order<NT>(&mut self, node: &NT, digest: Digest)
-        where NT: OrderedBCastNode<T> {
-        node.broadcast_ordered_bcast_message(OrderedBCastMessage::OrderVote(digest), self.members.clone().into_iter());
+    where
+        NT: OrderedBCastNode<T>,
+    {
+        node.broadcast_ordered_bcast_message(
+            OrderedBCastMessage::OrderVote(digest),
+            self.members.clone().into_iter(),
+        );
     }
 
     pub fn finish(self) -> Vec<T> {
@@ -178,12 +203,16 @@ impl<T> PendingOrderedBCastMessages<T> {
     fn queue_message(&mut self, header: Header, bcast_message: OrderedBCastMessage<T>) {
         match bcast_message {
             OrderedBCastMessage::Order(_) => {
-                self.pending_order.push_back(StoredMessage::new(header.clone(), bcast_message));
+                self.pending_order
+                    .push_back(StoredMessage::new(header.clone(), bcast_message));
             }
             OrderedBCastMessage::OrderVote(_) => {
-                self.pending_order_vote.push_back(StoredMessage::new(header.clone(), bcast_message));
+                self.pending_order_vote
+                    .push_back(StoredMessage::new(header.clone(), bcast_message));
             }
-            _ => unreachable!("How can we query a message that is supposed to be processed immediately?")
+            _ => unreachable!(
+                "How can we query a message that is supposed to be processed immediately?"
+            ),
         }
     }
 }

@@ -1,16 +1,23 @@
-use std::collections::{BTreeMap, BTreeSet};
-use log::{debug, error, info};
-use thiserror::Error;
+use crate::message::{
+    OperationMessage, QuorumJoinReconfMessages, QuorumJoinResponse, QuorumObtainInfoOpMessage,
+    QuorumViewCert,
+};
+use crate::quorum_config::network::QuorumConfigNetworkNode;
+use crate::quorum_config::operations::{
+    Operation, OperationExecutionCandidateError, OperationResponse,
+};
+use crate::quorum_config::{InternalNode, QuorumView};
 use atlas_common::crypto::hash::Digest;
-use atlas_common::Err;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
+use atlas_common::Err;
 use atlas_communication::message::{Header, StoredMessage};
-use atlas_core::reconfiguration_protocol::{QuorumReconfigurationMessage, QuorumReconfigurationResponse};
-use crate::quorum_config::{InternalNode, QuorumView};
-use crate::message::{OperationMessage, QuorumJoinReconfMessages, QuorumJoinResponse, QuorumObtainInfoOpMessage, QuorumViewCert};
-use crate::quorum_config::network::QuorumConfigNetworkNode;
-use crate::quorum_config::operations::{Operation, OperationExecutionCandidateError, OperationResponse};
+use atlas_core::reconfiguration_protocol::{
+    QuorumReconfigurationMessage, QuorumReconfigurationResponse,
+};
+use log::{debug, error, info};
+use std::collections::{BTreeMap, BTreeSet};
+use thiserror::Error;
 
 /// Obtains the quorum information
 pub struct ObtainQuorumInfoOP {
@@ -38,7 +45,6 @@ impl ObtainQuorumInfoOP {
     pub(super) const LAST_EXEC: &'static str = "LAST_EXECUTED";
 
     pub fn initialize(threshold: usize, current_known_quorum: Vec<NodeId>) -> Self {
-
         //TODO: Broadcast the quorum information request to the currently known quorum
 
         Self {
@@ -50,9 +56,17 @@ impl ObtainQuorumInfoOP {
         }
     }
 
-    pub fn respond_to_request<NT>(node: &InternalNode, network: &NT, header: Header) -> atlas_common::error::Result<()>
-        where NT: QuorumConfigNetworkNode + 'static {
-        let quorum_info = QuorumObtainInfoOpMessage::QuorumInformationResponse(node.observer().current_view().clone());
+    pub fn respond_to_request<NT>(
+        node: &InternalNode,
+        network: &NT,
+        header: Header,
+    ) -> atlas_common::error::Result<()>
+    where
+        NT: QuorumConfigNetworkNode + 'static,
+    {
+        let quorum_info = QuorumObtainInfoOpMessage::QuorumInformationResponse(
+            node.observer().current_view().clone(),
+        );
 
         let op_message_type = OperationMessage::QuorumInfoOp(quorum_info);
 
@@ -66,9 +80,7 @@ impl ObtainQuorumInfoOP {
             received_messages.push((message_digests.clone(), messages.clone()));
         }
 
-        received_messages.sort_by(|(_, a), (_, b)| {
-            a.len().cmp(&b.len()).reverse()
-        });
+        received_messages.sort_by(|(_, a), (_, b)| a.len().cmp(&b.len()).reverse());
 
         debug!("Processed received messages: {:?}", received_messages);
 
@@ -78,7 +90,11 @@ impl ObtainQuorumInfoOP {
 
                 Ok(view)
             } else {
-                Err!(QuorumObtainInfoError::FailedNotEnoughMatching(self.threshold, quorum_certs.len(), quorum_digest.clone()))
+                Err!(QuorumObtainInfoError::FailedNotEnoughMatching(
+                    self.threshold,
+                    quorum_certs.len(),
+                    quorum_digest.clone()
+                ))
             }
         } else {
             Err!(QuorumObtainInfoError::FailedNoMessagesReceived)
@@ -88,7 +104,7 @@ impl ObtainQuorumInfoOP {
     fn from_operation_message(msg: OperationMessage) -> (QuorumObtainInfoOpMessage) {
         match msg {
             OperationMessage::QuorumInfoOp(msg) => msg,
-            _ => unreachable!("Received wrong message type")
+            _ => unreachable!("Received wrong message type"),
         }
     }
 }
@@ -100,12 +116,23 @@ impl Operation for ObtainQuorumInfoOP {
         Ok(())
     }
 
-    fn iterate<NT>(&mut self, node: &mut InternalNode, network: &NT) -> atlas_common::error::Result<OperationResponse>
-        where NT: QuorumConfigNetworkNode + 'static {
+    fn iterate<NT>(
+        &mut self,
+        node: &mut InternalNode,
+        network: &NT,
+    ) -> atlas_common::error::Result<OperationResponse>
+    where
+        NT: QuorumConfigNetworkNode + 'static,
+    {
         if let OperationState::Waiting = self.state {
-            let op_message = OperationMessage::QuorumInfoOp(QuorumObtainInfoOpMessage::RequestInformationMessage);
+            let op_message = OperationMessage::QuorumInfoOp(
+                QuorumObtainInfoOpMessage::RequestInformationMessage,
+            );
 
-            let _ = network.broadcast_quorum_message(op_message, self.current_known_quorum.clone().into_iter());
+            let _ = network.broadcast_quorum_message(
+                op_message,
+                self.current_known_quorum.clone().into_iter(),
+            );
 
             self.state = OperationState::ReceivingInfo(0);
         }
@@ -113,58 +140,88 @@ impl Operation for ObtainQuorumInfoOP {
         Ok(OperationResponse::Processing)
     }
 
-    fn handle_received_message<NT>(&mut self, node: &mut InternalNode, network: &NT, header: Header, message: OperationMessage) -> atlas_common::error::Result<OperationResponse> {
+    fn handle_received_message<NT>(
+        &mut self,
+        node: &mut InternalNode,
+        network: &NT,
+        header: Header,
+        message: OperationMessage,
+    ) -> atlas_common::error::Result<OperationResponse> {
         let message = Self::from_operation_message(message);
 
         match message {
             QuorumObtainInfoOpMessage::RequestInformationMessage => {
                 unreachable!("Received request information message while we are the ones requesting information")
             }
-            QuorumObtainInfoOpMessage::QuorumInformationResponse(quorum) => {
-                match &mut self.state {
-                    OperationState::Waiting => {}
-                    OperationState::ReceivingInfo(received) if self.received.insert(header.from()) => {
-                        debug!("Received quorum information from node {:?} with information {:?}, digest {:?}", header.from(), quorum, header.digest());
-                        *received += 1;
+            QuorumObtainInfoOpMessage::QuorumInformationResponse(quorum) => match &mut self.state {
+                OperationState::Waiting => {}
+                OperationState::ReceivingInfo(received) if self.received.insert(header.from()) => {
+                    debug!("Received quorum information from node {:?} with information {:?}, digest {:?}", header.from(), quorum, header.digest());
+                    *received += 1;
 
-                        let digest = header.digest().clone();
+                    let digest = header.digest().clone();
 
-                        self.quorum_views.entry(digest).or_insert_with(Vec::new).push(StoredMessage::new(header, quorum));
+                    self.quorum_views
+                        .entry(digest)
+                        .or_insert_with(Vec::new)
+                        .push(StoredMessage::new(header, quorum));
 
-                        if *received >= self.threshold {
-                            if self.quorum_views.values().filter(|certs| certs.len() >= self.threshold).count() > 0 {
-                                info!("Received enough responses, and enough matching quorum views, finishing operation");
+                    if *received >= self.threshold {
+                        if self
+                            .quorum_views
+                            .values()
+                            .filter(|certs| certs.len() >= self.threshold)
+                            .count()
+                            > 0
+                        {
+                            info!("Received enough responses, and enough matching quorum views, finishing operation");
 
-                                self.state = OperationState::Done;
+                            self.state = OperationState::Done;
 
-                                return Ok(OperationResponse::Completed);
-                            } else {
-                                info!("Received enough responses, but not enough matching quorum views, waiting for more");
-                            }
+                            return Ok(OperationResponse::Completed);
+                        } else {
+                            info!("Received enough responses, but not enough matching quorum views, waiting for more");
                         }
                     }
-                    OperationState::ReceivingInfo(_) => {
-                        error!("Received duplicate message from node {:?}", header.from());
-                    }
-                    OperationState::Done => debug!("Received message from node {:?} after operation was done", header.from())
                 }
-            }
+                OperationState::ReceivingInfo(_) => {
+                    error!("Received duplicate message from node {:?}", header.from());
+                }
+                OperationState::Done => debug!(
+                    "Received message from node {:?} after operation was done",
+                    header.from()
+                ),
+            },
         }
 
         Ok(OperationResponse::Processing)
     }
 
-    fn handle_quorum_response<NT>(&mut self, node: &mut InternalNode, network: &NT, quorum_response: QuorumReconfigurationResponse)
-                                  -> atlas_common::error::Result<OperationResponse> {
+    fn handle_quorum_response<NT>(
+        &mut self,
+        node: &mut InternalNode,
+        network: &NT,
+        quorum_response: QuorumReconfigurationResponse,
+    ) -> atlas_common::error::Result<OperationResponse> {
         Ok(OperationResponse::Processing)
     }
 
-    fn finish<NT>(self, observer: &mut InternalNode, network: &NT) -> atlas_common::error::Result<()> {
+    fn finish<NT>(
+        self,
+        observer: &mut InternalNode,
+        network: &NT,
+    ) -> atlas_common::error::Result<()> {
         let view = self.finalize()?;
 
         observer.observer().install_quorum_view(view);
 
-        observer.data_mut().insert(Self::OP_NAME, Self::LAST_EXEC, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis());
+        observer.data_mut().insert(
+            Self::OP_NAME,
+            Self::LAST_EXEC,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_millis(),
+        );
 
         Ok(())
     }

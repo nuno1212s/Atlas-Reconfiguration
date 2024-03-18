@@ -1,10 +1,10 @@
+use getset::Getters;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
-use getset::Getters;
 
+use atlas_common::crypto::hash::Digest;
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
-use atlas_common::crypto::hash::Digest;
 
 use atlas_common::crypto::signature::{PublicKey, Signature};
 use atlas_common::crypto::threshold_crypto::thold_crypto::dkg::{Ack, DealerPart};
@@ -155,7 +155,7 @@ pub type QuorumViewCert = StoredMessage<QuorumView>;
 
 /// Messages that will be sent via channel to the reconfiguration module
 pub enum ReconfigMessage {
-    TimeoutReceived(Vec<RqTimeout>)
+    TimeoutReceived(Vec<RqTimeout>),
 }
 
 /// Messages relating to the ordered broadcast protocol
@@ -289,18 +289,16 @@ impl NetworkReconfigMessage {
     }
 }
 
-
 impl From<&KnownNodes> for KnownNodesMessage {
     fn from(value: &KnownNodes) -> Self {
         let mut known_nodes = Vec::with_capacity(value.node_info().len());
 
-        value.node_info().iter().for_each(|(node_id, node_info)| {
-            known_nodes.push(node_info.clone())
-        });
+        value
+            .node_info()
+            .iter()
+            .for_each(|(node_id, node_info)| known_nodes.push(node_info.clone()));
 
-        KnownNodesMessage {
-            nodes: known_nodes,
-        }
+        KnownNodesMessage { nodes: known_nodes }
     }
 }
 
@@ -319,8 +317,14 @@ pub struct ReconfData;
 pub struct ReconfVerifier;
 
 impl InternalMessageVerifier<ReconfigurationMessage> for ReconfVerifier {
-    fn verify_message<NI>(_info_provider: &Arc<NI>, _header: &Header, _message: &ReconfigurationMessage)
-                          -> atlas_common::error::Result<()> where NI: NetworkInformationProvider {
+    fn verify_message<NI>(
+        _info_provider: &Arc<NI>,
+        _header: &Header,
+        _message: &ReconfigurationMessage,
+    ) -> atlas_common::error::Result<()>
+    where
+        NI: NetworkInformationProvider,
+    {
         Ok(())
     }
 }
@@ -330,12 +334,17 @@ impl Serializable for ReconfData {
     type Verifier = ReconfVerifier;
 
     #[cfg(feature = "serialize_capnp")]
-    fn serialize_capnp(builder: febft_capnp::messages_capnp::system::Builder, msg: &Self::Message) -> atlas_common::error::Result<()> {
+    fn serialize_capnp(
+        builder: febft_capnp::messages_capnp::system::Builder,
+        msg: &Self::Message,
+    ) -> atlas_common::error::Result<()> {
         todo!()
     }
 
     #[cfg(feature = "serialize_capnp")]
-    fn deserialize_capnp(reader: febft_capnp::messages_capnp::system::Reader) -> atlas_common::error::Result<Self::Message> {
+    fn deserialize_capnp(
+        reader: febft_capnp::messages_capnp::system::Reader,
+    ) -> atlas_common::error::Result<Self::Message> {
         todo!()
     }
 }
@@ -381,9 +390,7 @@ impl ThresholdDKGArgs {
 
 impl QuorumAcceptResponse {
     pub fn init(view: QuorumView) -> Self {
-        Self {
-            view,
-        }
+        Self { view }
     }
 }
 
@@ -398,9 +405,7 @@ impl QuorumCommitAcceptResponse {
 
 impl LockedQC {
     pub fn new(proofs: Vec<StoredMessage<QuorumAcceptResponse>>) -> Self {
-        Self {
-            proofs,
-        }
+        Self { proofs }
     }
 
     pub fn quorum(&self) -> &QuorumView {
@@ -418,9 +423,7 @@ impl LockedQC {
 
 impl CommittedQC {
     pub fn new(proofs: Vec<StoredMessage<QuorumCommitAcceptResponse>>) -> Self {
-        Self {
-            proofs,
-        }
+        Self { proofs }
     }
 
     pub fn quorum(&self) -> &QuorumView {

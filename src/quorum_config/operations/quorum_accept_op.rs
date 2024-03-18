@@ -2,17 +2,22 @@ use either::Either;
 use log::{info, warn};
 use thiserror::Error;
 
-use atlas_common::Err;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
+use atlas_common::Err;
 use atlas_communication::message::Header;
 use atlas_core::reconfiguration_protocol::QuorumReconfigurationResponse;
 
-use crate::message::{CommittedQC, LockedQC, OperationMessage, QuorumAcceptResponse, QuorumCommitAcceptResponse, QuorumCommitResponse, QuorumJoinReconfMessages, QuorumJoinResponse, QuorumRejectionReason};
-use crate::quorum_config::{InternalNode, NodeStatusType, QuorumView};
-use crate::quorum_config::{get_f_for_n, get_quorum_for_n, QuorumCert, QuorumCertPart};
+use crate::message::{
+    CommittedQC, LockedQC, OperationMessage, QuorumAcceptResponse, QuorumCommitAcceptResponse,
+    QuorumCommitResponse, QuorumJoinReconfMessages, QuorumJoinResponse, QuorumRejectionReason,
+};
 use crate::quorum_config::network::QuorumConfigNetworkNode;
-use crate::quorum_config::operations::{Operation, OperationExecutionCandidateError, OperationResponse};
+use crate::quorum_config::operations::{
+    Operation, OperationExecutionCandidateError, OperationResponse,
+};
+use crate::quorum_config::{get_f_for_n, get_quorum_for_n, QuorumCert, QuorumCertPart};
+use crate::quorum_config::{InternalNode, NodeStatusType, QuorumView};
 
 /// The operation to accept a new node into the quorum
 pub struct QuorumAcceptNodeOperation {
@@ -52,43 +57,70 @@ impl QuorumAcceptNodeOperation {
 
     fn unwrap_operation_message(op: OperationMessage) -> QuorumJoinReconfMessages {
         match op {
-            OperationMessage::QuorumReconfiguration(msg) => { msg }
-            _ => unreachable!("We should only receive quorum reconfiguration messages in this operation (accept)")
+            OperationMessage::QuorumReconfiguration(msg) => msg,
+            _ => unreachable!(
+                "We should only receive quorum reconfiguration messages in this operation (accept)"
+            ),
         }
     }
 }
 
 impl QuorumAcceptNodeOperation {
     /// Handle a request being received
-    pub fn handle_request_join_quorum_received<NT>(&mut self, node: &mut InternalNode, network: &NT, header: Header, request: QuorumView)
-                                                   -> atlas_common::error::Result<OperationResponse>
-        where NT: QuorumConfigNetworkNode + 'static {
+    pub fn handle_request_join_quorum_received<NT>(
+        &mut self,
+        node: &mut InternalNode,
+        network: &NT,
+        header: Header,
+        request: QuorumView,
+    ) -> atlas_common::error::Result<OperationResponse>
+    where
+        NT: QuorumConfigNetworkNode + 'static,
+    {
         let current_view = node.observer().current_view();
 
-        info!("Received a request to join the quorum from {:?} with view {:?}", header.from(), request);
+        info!(
+            "Received a request to join the quorum from {:?} with view {:?}",
+            header.from(),
+            request
+        );
 
         let response: QuorumJoinResponse;
 
         let result: atlas_common::error::Result<OperationResponse>;
 
         if let OperationPhase::Waiting = &self.phase {
-            result = match current_view.sequence_number().index(request.sequence_number()) {
+            result = match current_view
+                .sequence_number()
+                .index(request.sequence_number())
+            {
                 Either::Right(0) => {
                     if current_view != request {
                         warn!("The join request made by {:?} is not valid as the provided quorum view does not match our own. {:?} vs {:?}", 
                         header.from(), current_view, request,);
 
-                        response = QuorumJoinResponse::Rejected(QuorumRejectionReason::ViewDoesNotMatch(current_view));
+                        response = QuorumJoinResponse::Rejected(
+                            QuorumRejectionReason::ViewDoesNotMatch(current_view),
+                        );
 
                         Ok(OperationResponse::CompletedFailed)
                     } else {
-                        info!("Accepting quorum join request from {:?} with view {:?}", header.from(), request);
+                        info!(
+                            "Accepting quorum join request from {:?} with view {:?}",
+                            header.from(),
+                            request
+                        );
 
-                        let next_view = current_view.next_with_added_node(header.from(), get_f_for_n(current_view.quorum_members().len() + 1));
+                        let next_view = current_view.next_with_added_node(
+                            header.from(),
+                            get_f_for_n(current_view.quorum_members().len() + 1),
+                        );
 
                         self.phase = OperationPhase::LockedQC(next_view.clone());
 
-                        response = QuorumJoinResponse::Accepted(QuorumAcceptResponse::init(next_view.clone()));
+                        response = QuorumJoinResponse::Accepted(QuorumAcceptResponse::init(
+                            next_view.clone(),
+                        ));
 
                         Ok(OperationResponse::Processing)
                     }
@@ -97,7 +129,11 @@ impl QuorumAcceptNodeOperation {
                     warn!("The join request made by {:?} is not valid as it's sequence number is too old. {:?} vs {:?}",
                     header.from(), current_view.sequence_number(), request.sequence_number(),);
 
-                    response = QuorumJoinResponse::Rejected(QuorumRejectionReason::SeqNoTooAdvanced(request.sequence_number(), current_view.sequence_number()));
+                    response =
+                        QuorumJoinResponse::Rejected(QuorumRejectionReason::SeqNoTooAdvanced(
+                            request.sequence_number(),
+                            current_view.sequence_number(),
+                        ));
 
                     Ok(OperationResponse::CompletedFailed)
                 }
@@ -105,7 +141,10 @@ impl QuorumAcceptNodeOperation {
                     warn!("The join request made by {:?} is not valid as it's sequence number is too old. {:?} vs {:?}",
                     header.from(), current_view.sequence_number(), request.sequence_number(),);
 
-                    response = QuorumJoinResponse::Rejected(QuorumRejectionReason::SeqNoTooOld(request.sequence_number(), current_view.sequence_number()));
+                    response = QuorumJoinResponse::Rejected(QuorumRejectionReason::SeqNoTooOld(
+                        request.sequence_number(),
+                        current_view.sequence_number(),
+                    ));
 
                     Ok(OperationResponse::CompletedFailed)
                 }
@@ -119,23 +158,42 @@ impl QuorumAcceptNodeOperation {
             result = Ok(OperationResponse::Processing);
         }
 
-        network.send_quorum_config_message(OperationMessage::QuorumReconfiguration(QuorumJoinReconfMessages::LockedQuorumResponse(response)),
-                                           header.from())?;
+        network.send_quorum_config_message(
+            OperationMessage::QuorumReconfiguration(
+                QuorumJoinReconfMessages::LockedQuorumResponse(response),
+            ),
+            header.from(),
+        )?;
 
         result
     }
 
     /// Handle a locked quorum certificate being received from the network
-    pub fn handle_quorum_locked_qc_message<NT>(&mut self, node: &mut InternalNode, network: &NT, header: Header, message: LockedQC)
-                                               -> atlas_common::error::Result<OperationResponse>
-        where NT: QuorumConfigNetworkNode + 'static {
+    pub fn handle_quorum_locked_qc_message<NT>(
+        &mut self,
+        node: &mut InternalNode,
+        network: &NT,
+        header: Header,
+        message: LockedQC,
+    ) -> atlas_common::error::Result<OperationResponse>
+    where
+        NT: QuorumConfigNetworkNode + 'static,
+    {
         if let Err(err) = is_valid_qc(&message, &node.observer().current_view()) {
-            warn!("Received invalid quorum certificate from {:?} in accept operation", header.from());
+            warn!(
+                "Received invalid quorum certificate from {:?} in accept operation",
+                header.from()
+            );
 
-            let rejected_qc = QuorumCommitResponse::Rejected(QuorumRejectionReason::InvalidPart(err.to_string()));
+            let rejected_qc =
+                QuorumCommitResponse::Rejected(QuorumRejectionReason::InvalidPart(err.to_string()));
 
-            network.send_quorum_config_message(OperationMessage::QuorumReconfiguration(QuorumJoinReconfMessages::CommitQuorumResponse(rejected_qc)),
-                                               header.from())?;
+            network.send_quorum_config_message(
+                OperationMessage::QuorumReconfiguration(
+                    QuorumJoinReconfMessages::CommitQuorumResponse(rejected_qc),
+                ),
+                header.from(),
+            )?;
 
             return Err!(QuorumAcceptOpError::QCError(err));
         }
@@ -201,15 +259,31 @@ impl QuorumAcceptNodeOperation {
         Ok(OperationResponse::Processing)
     }
 
-    pub fn handle_commit_qc_received<NT>(&mut self, node: &mut InternalNode, network: &NT, header: Header, message: CommittedQC) -> atlas_common::error::Result<OperationResponse>
-        where NT: QuorumConfigNetworkNode + 'static {
+    pub fn handle_commit_qc_received<NT>(
+        &mut self,
+        node: &mut InternalNode,
+        network: &NT,
+        header: Header,
+        message: CommittedQC,
+    ) -> atlas_common::error::Result<OperationResponse>
+    where
+        NT: QuorumConfigNetworkNode + 'static,
+    {
         if let Err(err) = is_valid_qc(&message, &node.observer().current_view()) {
-            warn!("Received invalid quorum certificate from {:?} in accept operation", header.from());
+            warn!(
+                "Received invalid quorum certificate from {:?} in accept operation",
+                header.from()
+            );
 
-            let rejected_qc = QuorumCommitResponse::Rejected(QuorumRejectionReason::InvalidPart(err.to_string()));
+            let rejected_qc =
+                QuorumCommitResponse::Rejected(QuorumRejectionReason::InvalidPart(err.to_string()));
 
-            network.send_quorum_config_message(OperationMessage::QuorumReconfiguration(QuorumJoinReconfMessages::CommitQuorumResponse(rejected_qc)),
-                                               header.from())?;
+            network.send_quorum_config_message(
+                OperationMessage::QuorumReconfiguration(
+                    QuorumJoinReconfMessages::CommitQuorumResponse(rejected_qc),
+                ),
+                header.from(),
+            )?;
 
             return Err!(QuorumAcceptOpError::QCError(err));
         }
@@ -239,48 +313,93 @@ impl QuorumAcceptNodeOperation {
 impl Operation for QuorumAcceptNodeOperation {
     const OP_NAME: &'static str = "ACCEPT_NODE";
 
-    fn can_execute(observer: &InternalNode) -> Result<(), OperationExecutionCandidateError> where Self: Sized {
+    fn can_execute(observer: &InternalNode) -> Result<(), OperationExecutionCandidateError>
+    where
+        Self: Sized,
+    {
         match observer.node_type() {
             NodeStatusType::ClientNode { .. } => {
-                Err(OperationExecutionCandidateError::RequirementsNotMet(QuorumAcceptOpError::ClientsNotPermitted.to_string()))
+                Err(OperationExecutionCandidateError::RequirementsNotMet(
+                    QuorumAcceptOpError::ClientsNotPermitted.to_string(),
+                ))
             }
             NodeStatusType::QuorumNode { .. } => {
                 if observer.is_part_of_quorum() {
                     Ok(())
                 } else {
-                    Err(OperationExecutionCandidateError::RequirementsNotMet(QuorumAcceptOpError::CannotRunAcceptWhileNotInQuorum.to_string()))
+                    Err(OperationExecutionCandidateError::RequirementsNotMet(
+                        QuorumAcceptOpError::CannotRunAcceptWhileNotInQuorum.to_string(),
+                    ))
                 }
             }
         }
     }
 
-    fn iterate<NT>(&mut self, node: &mut InternalNode, network: &NT) -> atlas_common::error::Result<OperationResponse>
-        where NT: QuorumConfigNetworkNode + 'static {
+    fn iterate<NT>(
+        &mut self,
+        node: &mut InternalNode,
+        network: &NT,
+    ) -> atlas_common::error::Result<OperationResponse>
+    where
+        NT: QuorumConfigNetworkNode + 'static,
+    {
         Ok(OperationResponse::Processing)
     }
 
-    fn handle_received_message<NT>(&mut self, node: &mut InternalNode, network: &NT, header: Header, message: OperationMessage) -> atlas_common::error::Result<OperationResponse>
-        where NT: QuorumConfigNetworkNode + 'static {
-
+    fn handle_received_message<NT>(
+        &mut self,
+        node: &mut InternalNode,
+        network: &NT,
+        header: Header,
+        message: OperationMessage,
+    ) -> atlas_common::error::Result<OperationResponse>
+    where
+        NT: QuorumConfigNetworkNode + 'static,
+    {
         let message = Self::unwrap_operation_message(message);
 
         match message {
-            QuorumJoinReconfMessages::RequestJoinQuorum(view) => self.handle_request_join_quorum_received(node, network, header, view),
-            QuorumJoinReconfMessages::CommitQuorum(qc) => self.handle_quorum_locked_qc_message(node, network, header, qc),
-            QuorumJoinReconfMessages::Decided(qc) => self.handle_commit_qc_received(node, network, header, qc),
-            QuorumJoinReconfMessages::LockedQuorumResponse(_) => Err!(QuorumAcceptOpError::ReceivedLockedQuorumResponseWhilePartOfQuorum),
-            QuorumJoinReconfMessages::CommitQuorumResponse(_) => Err!(QuorumAcceptOpError::ReceivedCommitQuorumResponseWhileNotCommitted),
+            QuorumJoinReconfMessages::RequestJoinQuorum(view) => {
+                self.handle_request_join_quorum_received(node, network, header, view)
+            }
+            QuorumJoinReconfMessages::CommitQuorum(qc) => {
+                self.handle_quorum_locked_qc_message(node, network, header, qc)
+            }
+            QuorumJoinReconfMessages::Decided(qc) => {
+                self.handle_commit_qc_received(node, network, header, qc)
+            }
+            QuorumJoinReconfMessages::LockedQuorumResponse(_) => {
+                Err!(QuorumAcceptOpError::ReceivedLockedQuorumResponseWhilePartOfQuorum)
+            }
+            QuorumJoinReconfMessages::CommitQuorumResponse(_) => {
+                Err!(QuorumAcceptOpError::ReceivedCommitQuorumResponseWhileNotCommitted)
+            }
         }
     }
 
-    fn handle_quorum_response<NT>(&mut self, node: &mut InternalNode, network: &NT, quorum_response: QuorumReconfigurationResponse) -> atlas_common::error::Result<OperationResponse>
-        where NT: QuorumConfigNetworkNode + 'static {
+    fn handle_quorum_response<NT>(
+        &mut self,
+        node: &mut InternalNode,
+        network: &NT,
+        quorum_response: QuorumReconfigurationResponse,
+    ) -> atlas_common::error::Result<OperationResponse>
+    where
+        NT: QuorumConfigNetworkNode + 'static,
+    {
         todo!()
     }
 
-    fn finish<NT>(mut self, observer: &mut InternalNode, network: &NT) -> atlas_common::error::Result<()>
-        where NT: QuorumConfigNetworkNode + 'static {
-        observer.observer().install_quorum_view(self.received_committed_qc.unwrap().quorum().clone());
+    fn finish<NT>(
+        mut self,
+        observer: &mut InternalNode,
+        network: &NT,
+    ) -> atlas_common::error::Result<()>
+    where
+        NT: QuorumConfigNetworkNode + 'static,
+    {
+        observer
+            .observer()
+            .install_quorum_view(self.received_committed_qc.unwrap().quorum().clone());
 
         Ok(())
     }
@@ -304,17 +423,25 @@ pub enum QuorumAcceptOpError {
 
 /// Check if the given quorum certificate is valid
 fn is_valid_qc<QC>(qc: &QC, current_quorum: &QuorumView) -> Result<(), HandleQCError>
-    where QC: QuorumCert {
+where
+    QC: QuorumCert,
+{
     let needed_quorum = get_quorum_for_n(current_quorum.quorum_members().len());
 
     if qc.proofs().len() < needed_quorum {
         // The QC does not have enough votes to be valid
-        return Err(HandleQCError::QCNotEnoughVotes(needed_quorum, qc.proofs().len()));
+        return Err(HandleQCError::QCNotEnoughVotes(
+            needed_quorum,
+            qc.proofs().len(),
+        ));
     }
 
     match qc.sequence_number().index(current_quorum.sequence_number()) {
         Either::Left(_) | Either::Right(0) => {
-            return Err(HandleQCError::QCTooOld(qc.sequence_number(), current_quorum.sequence_number()));
+            return Err(HandleQCError::QCTooOld(
+                qc.sequence_number(),
+                current_quorum.sequence_number(),
+            ));
         }
         Either::Right(1) => {}
         Either::Right(_) => {
