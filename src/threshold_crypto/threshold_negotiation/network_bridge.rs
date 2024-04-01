@@ -3,7 +3,6 @@ use crate::threshold_crypto::network::ThresholdNetwork;
 use crate::threshold_crypto::ordered_bcast::network::OrderedBCastNode;
 use atlas_common::crypto::threshold_crypto::thold_crypto::dkg::{Ack, DealerPart};
 use atlas_common::node_id::NodeId;
-use std::sync::Arc;
 
 pub struct DkgDealerSendNode<NT> {
     node: NT,

@@ -13,14 +13,14 @@ use atlas_common::collections::HashMap;
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_common::{quiet_unwrap, Err};
+use atlas_common::Err;
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::reconfiguration::NodeInfo;
 use atlas_core::reconfiguration_protocol::{
     QuorumReconfigurationMessage, QuorumReconfigurationResponse, QuorumUpdateMessage,
     ReconfigurableNodeTypes,
 };
-use atlas_core::timeouts::Timeouts;
+use atlas_core::timeouts::timeout::TimeoutModHandle;
 
 use crate::message::{
     CommittedQC, LockedQC, OperationMessage, QuorumAcceptResponse, QuorumCommitAcceptResponse,
@@ -260,10 +260,11 @@ impl Node {
             .handle_message(&mut self.node, network, header, message)
     }
 
-    pub fn handle_timeout<NT>(&mut self, network: &NT, timeouts: &Timeouts)
+    pub fn handle_timeout<NT>(&mut self, _network: &NT, _timeouts: &TimeoutModHandle)
     where
         NT: QuorumConfigNetworkNode + 'static,
     {
+        todo!("Still have to handle timeouts here")
     }
 }
 
@@ -413,7 +414,7 @@ impl OnGoingOperations {
                 }
             }
             OperationResponse::AwaitingResponseProtocol => {
-                if let None = self.awaiting_reconfig_response {
+                if self.awaiting_reconfig_response.is_none() {
                     self.awaiting_reconfig_response = Some(operation_name);
                 } else {
                     error!("The operation {} is already awaiting a response, but another operation is trying to await a response", operation_name);
@@ -444,7 +445,7 @@ impl OnGoingOperations {
         } = node.node_type().clone()
         {
             while let Ok(response) = quorum_responses.try_recv() {
-                if let Some(target) = self.awaiting_reconfig_response.clone() {
+                if let Some(target) = self.awaiting_reconfig_response {
                     if let Some(op) = self.get_mut_operation_of_type(target) {
                         // Process the quorum messages appropriately
 
@@ -470,8 +471,8 @@ impl OnGoingOperations {
         }
 
         match &mut node.node_type {
-            NodeStatusType::ClientNode { current_state, .. } => match current_state {
-                ClientState::Awaiting => {
+            NodeStatusType::ClientNode { current_state, .. } => {
+                if let ClientState::Awaiting = current_state {
                     if !self.has_operation_of_type(ObtainQuorumInfoOP::OP_NAME) {
                         info!("Launching quorum info operation as we have not yet obtained the quorum info");
 
@@ -480,14 +481,13 @@ impl OnGoingOperations {
                         self.launch_quorum_obtain_info_op(node)?;
                     }
                 }
-                _ => {}
-            },
+            }
             NodeStatusType::QuorumNode {
                 current_state,
                 quorum_responses,
                 ..
-            } => match current_state {
-                ReplicaState::Awaiting => {
+            } => {
+                if let ReplicaState::Awaiting = current_state {
                     if !self.has_operation_of_type(ObtainQuorumInfoOP::OP_NAME) {
                         info!("Launching quorum info operation as we have not yet obtained the quorum info");
 
@@ -496,8 +496,7 @@ impl OnGoingOperations {
                         self.launch_quorum_obtain_info_op(node)?;
                     }
                 }
-                _ => {}
-            },
+            }
         }
 
         for (op_name, op) in self.ongoing_operations.iter_mut() {

@@ -19,7 +19,8 @@ use atlas_communication::reconfiguration::{
     ReconfigurationNetworkUpdate,
 };
 use atlas_communication::stub::{ModuleOutgoingStub, RegularNetworkStub};
-use atlas_core::timeouts::Timeouts;
+use atlas_core::timeouts::timeout::TimeoutModHandle;
+use atlas_core::timeouts::TimeoutID;
 
 use crate::config::ReconfigurableNetworkConfig;
 use crate::message::{
@@ -410,7 +411,7 @@ impl GeneralNodeInfo {
         &mut self,
         seq: &mut SeqNoGen,
         network_node: &Arc<NT>,
-        timeouts: &Timeouts,
+        timeouts: &TimeoutModHandle,
     ) -> NetworkProtocolResponse
     where
         NT: RegularNetworkStub<ReconfData> + 'static,
@@ -478,10 +479,12 @@ impl GeneralNodeInfo {
                     known_nodes, res
                 );
 
-                timeouts.timeout_reconfig_request(
+                timeouts.request_timeout(
+                    TimeoutID::SeqNoBased(seq.curr_seq()),
+                    None,
                     TIMEOUT_DUR,
-                    ((contacted * 2 / 3) + 1) as u32,
-                    seq.curr_seq(),
+                    (contacted * 2 / 3) + 1,
+                    false,
                 );
 
                 self.current_state = NetworkNodeState::JoiningNetwork {
@@ -505,7 +508,7 @@ impl GeneralNodeInfo {
         &mut self,
         seq_gen: &mut SeqNoGen,
         network_node: &Arc<NT>,
-        timeouts: &Timeouts,
+        timeouts: &TimeoutModHandle,
     ) -> NetworkProtocolResponse
     where
         NT: RegularNetworkStub<ReconfData> + 'static,
@@ -576,10 +579,12 @@ impl GeneralNodeInfo {
                     .outgoing_stub()
                     .broadcast_signed(join_message, known_nodes.into_iter());
 
-                timeouts.timeout_reconfig_request(
+                timeouts.request_timeout(
+                    TimeoutID::SeqNoBased(seq_gen.curr_seq()),
+                    None,
                     TIMEOUT_DUR,
-                    (contacted / 2 + 1) as u32,
-                    seq_gen.curr_seq(),
+                    (contacted * 2 / 3) + 1,
+                    false,
                 );
 
                 self.current_state = NetworkNodeState::JoiningNetwork {
@@ -618,7 +623,7 @@ impl GeneralNodeInfo {
         seq_gen: &mut SeqNoGen,
         network_node: &Arc<NT>,
         reconf_msg_handler: &ReconfigurationMessageHandler,
-        timeouts: &Timeouts,
+        timeouts: &TimeoutModHandle,
         header: Header,
         message: NetworkReconfigMessage,
     ) -> NetworkProtocolResponse
@@ -659,7 +664,7 @@ impl GeneralNodeInfo {
                                 ) => {
                                     info!("We were accepted into the network by the node {:?}, current certificate count {:?}", header.from(), certificates.len());
 
-                                    timeouts.cancel_reconfig_timeout(Some(seq));
+                                    timeouts.cancel_timeout(TimeoutID::SeqNoBased(seq));
 
                                     let unknown_nodes = self
                                         .network_view

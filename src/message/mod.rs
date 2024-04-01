@@ -1,21 +1,20 @@
-use getset::Getters;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 
-use atlas_common::crypto::hash::Digest;
+use getset::Getters;
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 
-use atlas_common::crypto::signature::{PublicKey, Signature};
+use atlas_common::crypto::hash::Digest;
+use atlas_common::crypto::signature::Signature;
 use atlas_common::crypto::threshold_crypto::thold_crypto::dkg::{Ack, DealerPart};
-use atlas_common::node_id::{NodeId, NodeType};
+use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_common::peer_addr::PeerAddr;
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::reconfiguration::{NetworkInformationProvider, NodeInfo};
 use atlas_communication::serialization::{InternalMessageVerifier, Serializable};
 use atlas_core::serialize::ReconfigurationProtocolMessage;
-use atlas_core::timeouts::RqTimeout;
+use atlas_core::timeouts::timeout::ModTimeout;
 
 use crate::network_reconfig::KnownNodes;
 use crate::quorum_config::QuorumView;
@@ -155,7 +154,7 @@ pub type QuorumViewCert = StoredMessage<QuorumView>;
 
 /// Messages that will be sent via channel to the reconfiguration module
 pub enum ReconfigMessage {
-    TimeoutReceived(Vec<RqTimeout>),
+    TimeoutReceived(Vec<ModTimeout>),
 }
 
 /// Messages relating to the ordered broadcast protocol
