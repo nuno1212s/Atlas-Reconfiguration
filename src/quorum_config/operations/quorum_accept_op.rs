@@ -1,5 +1,5 @@
 use either::Either;
-use log::{info, warn};
+use tracing::{info, warn};
 use thiserror::Error;
 
 use atlas_common::node_id::NodeId;

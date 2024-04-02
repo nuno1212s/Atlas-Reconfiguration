@@ -4,7 +4,7 @@ use std::collections::{BTreeSet, VecDeque};
 use std::sync::Arc;
 
 use atlas_common::crypto::hash::Digest;
-use log::{debug, warn};
+use tracing::{debug, warn};
 
 use atlas_common::node_id::NodeId;
 use atlas_communication::message::{Header, StoredMessage};

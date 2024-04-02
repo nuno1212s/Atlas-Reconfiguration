@@ -9,7 +9,7 @@ use lazy_static::lazy_static;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use log::{debug, error, info, warn};
+use tracing::{debug, error, info, warn};
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 
@@ -44,9 +44,9 @@ pub mod threshold_crypto;
 
 const TIMEOUT_DUR: Duration = Duration::from_secs(3);
 
-lazy_static!(
+lazy_static! {
     static ref MOD_NAME: Arc<str> = Arc::from("RECONFIG");
-);
+}
 
 /// The reconfiguration module.
 /// Provides various utilities for allowing reconfiguration of the network
@@ -78,8 +78,8 @@ pub enum QuorumProtocolResponse {
 /// A reconfigurable node, used to handle the reconfiguration of the network as a whole
 #[derive(Getters)]
 pub struct ReconfigurableNode<NT>
-    where
-        NT: Send + 'static,
+where
+    NT: Send + 'static,
 {
     seq_gen: SeqNoGen,
     /// The reconfigurable node state
@@ -132,8 +132,8 @@ impl SeqNoGen {
 }
 
 impl<NT> ReconfigurableNode<NT>
-    where
-        NT: Send + 'static,
+where
+    NT: Send + 'static,
 {
     fn switch_state(&mut self, new_state: ReconfigurableNodeState) {
         match (&self.node_state, &new_state) {
@@ -163,8 +163,8 @@ impl<NT> ReconfigurableNode<NT>
     }
 
     fn run(&mut self) -> Result<()>
-        where
-            NT: RegularNetworkStub<ReconfData> + 'static,
+    where
+        NT: RegularNetworkStub<ReconfData> + 'static,
     {
         loop {
             self.handle_local_messages();
@@ -254,8 +254,8 @@ impl<NT> ReconfigurableNode<NT>
     }
 
     fn handle_local_messages(&mut self)
-        where
-            NT: RegularNetworkStub<ReconfData> + 'static,
+    where
+        NT: RegularNetworkStub<ReconfData> + 'static,
     {
         while let Ok(received_message) = self.channel_rx.try_recv() {
             match received_message {
@@ -331,9 +331,9 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocolHandle {
         network_updater: ReconfigurationMessageHandler,
         min_stable_node_count: usize,
     ) -> Result<Self>
-        where
-            NT: RegularNetworkStub<Self::Serialization> + 'static,
-            Self: Sized,
+    where
+        NT: RegularNetworkStub<Self::Serialization> + 'static,
+        Self: Sized,
     {
         let general_info = GeneralNodeInfo::new(information.clone(), NetworkNodeState::Init);
 

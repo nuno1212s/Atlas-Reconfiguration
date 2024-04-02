@@ -3,15 +3,15 @@ use std::sync::{Arc, RwLock};
 
 use futures::future::join_all;
 use futures::SinkExt;
-use log::{debug, error, info, warn};
+use tracing::{debug, error, info, warn};
 
+use atlas_common::{async_runtime as rt, quiet_unwrap};
 use atlas_common::channel::OneShotRx;
 use atlas_common::crypto::signature;
 use atlas_common::crypto::signature::{KeyPair, PublicKey};
 use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::ordering::SeqNo;
 use atlas_common::peer_addr::PeerAddr;
-use atlas_common::{async_runtime as rt, quiet_unwrap};
 use atlas_communication::byte_stub::connections::NetworkConnectionController;
 use atlas_communication::message::Header;
 use atlas_communication::reconfiguration::{
@@ -22,13 +22,13 @@ use atlas_communication::stub::{ModuleOutgoingStub, RegularNetworkStub};
 use atlas_core::timeouts::timeout::TimeoutModHandle;
 use atlas_core::timeouts::TimeoutID;
 
+use crate::{NetworkProtocolResponse, SeqNoGen, TIMEOUT_DUR};
 use crate::config::ReconfigurableNetworkConfig;
 use crate::message::{
-    signatures, KnownNodesMessage, NetworkJoinCert, NetworkJoinRejectionReason,
-    NetworkJoinResponseMessage, NetworkReconfigMessage, NetworkReconfigMessageType, ReconfData,
-    ReconfigurationMessage,
+    KnownNodesMessage, NetworkJoinCert, NetworkJoinRejectionReason, NetworkJoinResponseMessage,
+    NetworkReconfigMessage, NetworkReconfigMessageType, ReconfData, ReconfigurationMessage,
+    signatures,
 };
-use crate::{NetworkProtocolResponse, SeqNoGen, TIMEOUT_DUR};
 
 /// The reconfiguration module.
 /// Provides various utilities for allowing reconfiguration of the network

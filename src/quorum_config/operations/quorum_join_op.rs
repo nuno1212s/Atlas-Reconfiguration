@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use log::{debug, error, info, warn};
+use tracing::{debug, error, info, warn};
 use thiserror::Error;
 
 use atlas_common::error::*;

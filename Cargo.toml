@@ -24,7 +24,7 @@ atlas-core = {path = "../Atlas-Core"}
 
 futures = "0.3.26"
 
-log = "0.4.17"
+tracing = "*"
 
 bincode = "2.0.0-rc.3"
 serde = {version = "1"}

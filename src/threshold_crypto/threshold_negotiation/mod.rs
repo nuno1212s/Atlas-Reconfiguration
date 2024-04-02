@@ -1,25 +1,26 @@
-mod network_bridge;
-
-use log::warn;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use tracing::warn;
+
 use atlas_common::crypto::threshold_crypto::thold_crypto::dkg::{
-    Ack, DKGParams, DealerPart, DistributedKeyGenerator,
+    Ack, DealerPart, DistributedKeyGenerator, DKGParams,
 };
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_communication::message::{Header, StoredMessage};
 
-use crate::message::ThresholdMessages::DkgAck;
 use crate::message::{
     OrderedBCastMessage, ReconfData, ReconfigurationMessage, ThresholdDKGArgs, ThresholdMessages,
 };
+use crate::message::ThresholdMessages::DkgAck;
 use crate::threshold_crypto::network::ThresholdNetwork;
 use crate::threshold_crypto::ordered_bcast::OrderedBroadcast;
 use crate::threshold_crypto::threshold_negotiation::network_bridge::{
     DkgAckSendNode, DkgAckSendNodeRef, DkgDealerSendNode, DkgDealerSendNodeRef,
 };
+
+mod network_bridge;
 
 /// The ordered dealer parts, decided by the leader
 struct OrderedDealerParts(Vec<(usize, DealerPart)>);

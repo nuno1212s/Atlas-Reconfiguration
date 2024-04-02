@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use getset::{CopyGetters, Getters, MutGetters};
-use log::{debug, error, info, warn};
+use tracing::{debug, error, info, warn};
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

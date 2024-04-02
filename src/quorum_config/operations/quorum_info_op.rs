@@ -15,7 +15,7 @@ use atlas_communication::message::{Header, StoredMessage};
 use atlas_core::reconfiguration_protocol::{
     QuorumReconfigurationMessage, QuorumReconfigurationResponse,
 };
-use log::{debug, error, info};
+use tracing::{debug, error, info};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
