@@ -9,9 +9,9 @@ use lazy_static::lazy_static;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use tracing::{debug, error, info, warn};
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
+use tracing::{debug, error, info, warn};
 
 use atlas_common::channel;
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};

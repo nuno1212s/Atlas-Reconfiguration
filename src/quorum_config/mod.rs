@@ -3,10 +3,10 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use getset::{CopyGetters, Getters, MutGetters};
-use tracing::{debug, error, info, warn};
 #[cfg(feature = "serialize_serde")]
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tracing::{debug, error, info, warn};
 
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::collections::HashMap;

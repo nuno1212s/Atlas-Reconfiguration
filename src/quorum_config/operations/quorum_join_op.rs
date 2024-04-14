@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
-use tracing::{debug, error, info, warn};
 use thiserror::Error;
+use tracing::{debug, error, info, warn};
 
 use atlas_common::error::*;
 use atlas_common::{quiet_unwrap, Err};

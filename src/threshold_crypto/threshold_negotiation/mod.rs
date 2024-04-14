@@ -4,16 +4,16 @@ use std::sync::Arc;
 use tracing::warn;
 
 use atlas_common::crypto::threshold_crypto::thold_crypto::dkg::{
-    Ack, DealerPart, DistributedKeyGenerator, DKGParams,
+    Ack, DKGParams, DealerPart, DistributedKeyGenerator,
 };
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_communication::message::{Header, StoredMessage};
 
+use crate::message::ThresholdMessages::DkgAck;
 use crate::message::{
     OrderedBCastMessage, ReconfData, ReconfigurationMessage, ThresholdDKGArgs, ThresholdMessages,
 };
-use crate::message::ThresholdMessages::DkgAck;
 use crate::threshold_crypto::network::ThresholdNetwork;
 use crate::threshold_crypto::ordered_bcast::OrderedBroadcast;
 use crate::threshold_crypto::threshold_negotiation::network_bridge::{

@@ -1,6 +1,6 @@
 use either::Either;
-use tracing::{info, warn};
 use thiserror::Error;
+use tracing::{info, warn};
 
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
