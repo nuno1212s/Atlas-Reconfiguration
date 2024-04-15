@@ -24,7 +24,7 @@ use atlas_communication::reconfiguration::{
 };
 use atlas_communication::stub::{ModuleIncomingStub, RegularNetworkStub};
 use atlas_core::reconfiguration_protocol::{
-    QuorumJoinCert, ReconfigResponse, ReconfigurableNodeTypes, ReconfigurationProtocol,
+    QuorumJoinCert, ReconfigResponse, ReconfigurableNodeType, ReconfigurationProtocol,
 };
 use atlas_core::timeouts::timeout::{ModTimeout, TimeoutModHandle, TimeoutableMod};
 use atlas_core::timeouts::{Timeout, TimeoutID, TimeoutIdentification, TimeoutsHandle};
@@ -327,7 +327,7 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocolHandle {
         information: Arc<Self::InformationProvider>,
         node: Arc<NT>,
         timeouts: TimeoutModHandle,
-        node_type: ReconfigurableNodeTypes,
+        node_type: ReconfigurableNodeType,
         network_updater: ReconfigurationMessageHandler,
         min_stable_node_count: usize,
     ) -> Result<Self>

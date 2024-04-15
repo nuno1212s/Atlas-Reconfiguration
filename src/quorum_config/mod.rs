@@ -18,7 +18,7 @@ use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::reconfiguration::NodeInfo;
 use atlas_core::reconfiguration_protocol::{
     QuorumReconfigurationMessage, QuorumReconfigurationResponse, QuorumUpdateMessage,
-    ReconfigurableNodeTypes,
+    ReconfigurableNodeType,
 };
 use atlas_core::timeouts::timeout::TimeoutModHandle;
 
@@ -215,7 +215,7 @@ impl Node {
     pub fn initialize_with_observer(
         node_info: NodeInfo,
         observer: QuorumObserver,
-        node_type: ReconfigurableNodeTypes,
+        node_type: ReconfigurableNodeType,
     ) -> Self {
         Self {
             node: InternalNode::init_with_observer(node_info, observer, node_type),
@@ -226,7 +226,7 @@ impl Node {
     pub fn initialize_node(
         node_info: NodeInfo,
         bootstrap_nodes: Vec<NodeId>,
-        node_type: ReconfigurableNodeTypes,
+        node_type: ReconfigurableNodeType,
     ) -> (Self, QuorumObserver) {
         let internal_node = InternalNode::initialize(node_info, bootstrap_nodes, node_type);
 
@@ -269,13 +269,13 @@ impl Node {
 }
 
 impl InternalNode {
-    fn init_node_type_from(node_type: ReconfigurableNodeTypes) -> NodeStatusType {
+    fn init_node_type_from(node_type: ReconfigurableNodeType) -> NodeStatusType {
         match node_type {
-            ReconfigurableNodeTypes::ClientNode(tx) => NodeStatusType::ClientNode {
+            ReconfigurableNodeType::ClientNode(tx) => NodeStatusType::ClientNode {
                 quorum_comm: tx,
                 current_state: ClientState::Awaiting,
             },
-            ReconfigurableNodeTypes::QuorumNode(tx, rx) => NodeStatusType::QuorumNode {
+            ReconfigurableNodeType::QuorumNode(tx, rx) => NodeStatusType::QuorumNode {
                 quorum_communication: tx,
                 quorum_responses: rx,
                 current_state: ReplicaState::Awaiting,
@@ -286,7 +286,7 @@ impl InternalNode {
     fn init_with_observer(
         node_info: NodeInfo,
         observer: QuorumObserver,
-        node_type: ReconfigurableNodeTypes,
+        node_type: ReconfigurableNodeType,
     ) -> Self {
         Self {
             node_info,
@@ -299,7 +299,7 @@ impl InternalNode {
     fn initialize(
         node_info: NodeInfo,
         bootstrap_nodes: Vec<NodeId>,
-        node_type: ReconfigurableNodeTypes,
+        node_type: ReconfigurableNodeType,
     ) -> Self {
         Self {
             node_info,
