@@ -5,6 +5,7 @@ use std::sync::{Arc, RwLock};
 use futures::future::join_all;
 use futures::SinkExt;
 use tracing::{debug, error, info, warn};
+use thiserror::Error;
 
 use atlas_common::error::*;
 use atlas_common::{async_runtime as rt, quiet_unwrap, threadpool};
@@ -149,7 +150,7 @@ impl NetworkInfo {
         &self,
         node: NodeInfo,
         certificates: Vec<NetworkJoinCert>,
-    ) -> bool {
+    ) -> std::result::Result<(), ValidNetworkHelloError> {
         debug!(
             "Received a node hello message from node {:?}. Handling it",
             node
@@ -160,7 +161,8 @@ impl NetworkInfo {
             if let Some(pk) = from_pk {
                 if !signatures::verify_node_triple_signature(&node, signature, &pk) {
                     error!("Received a node hello message from node {:?} with invalid signature. Ignoring it",node);
-                    return false;
+
+                    return Err(ValidNetworkHelloError::InvalidSignatures);
                 }
             } else {
                 error!("Received a node hello message from node {:?} with certificate from node {:?} which we don't know. Ignoring it",node, from);
@@ -168,7 +170,7 @@ impl NetworkInfo {
 
             if !self.bootstrap_nodes.contains(from) {
                 error!("Received a node hello message from node {:?} with certificate from node {:?} which is not a bootstrap node. Ignoring it",node, from);
-                return false;
+                return Err(ValidNetworkHelloError::NonBootstrapCertificate);
             }
         }
 
@@ -181,10 +183,13 @@ impl NetworkInfo {
 
         if certificates.len() < required {
             error!("Received a node hello message from node {:?} with less certificates than 2n/3 bootstrap nodes {:?} vs required {:?}. Ignoring it", node, certificates.len(), required);
-            return false;
+            return Err(ValidNetworkHelloError::NotEnoughCertificates {
+                required,
+                provided: certificates.len(),
+            });
         }
 
-        true
+        Ok(())
     }
 
     /// Handle us having received a successfull network join response, with the list of known nodes
@@ -864,48 +869,51 @@ impl GeneralNodeInfo {
     ) where
         NT: RegularNetworkStub<ReconfData> + 'static,
     {
-        if self
-            .network_view
-            .is_valid_network_hello(node.clone(), confirmations)
-        {
-            info!("Received a node hello message from node {:?} with enough certificates. Adding it to our known nodes", node);
+        match self.network_view.is_valid_network_hello(node.clone(), confirmations) {
+            Ok(_) => {
+                info!("Received a node hello message from node {:?} with enough certificates. Adding it to our known nodes", node);
 
-            let known_nodes = {
-                let read_guard = self.network_view.known_nodes.read().unwrap();
+                let known_nodes = {
+                    let read_guard = self.network_view.known_nodes.read().unwrap();
 
-                KnownNodesMessage::from(&*read_guard)
-            };
+                    KnownNodesMessage::from(&*read_guard)
+                };
 
-            let hello_reply_message = NetworkReconfigMessage::new(
-                seq,
-                NetworkReconfigMessageType::NetworkHelloReply(known_nodes),
-            );
+                let hello_reply_message = NetworkReconfigMessage::new(
+                    seq,
+                    NetworkReconfigMessageType::NetworkHelloReply(known_nodes),
+                );
 
-            let _ = network_node.outgoing_stub().send_signed(
-                ReconfigurationMessage::NetworkReconfig(hello_reply_message),
-                header.from(),
-                true,
-            );
+                let _ = network_node.outgoing_stub().send_signed(
+                    ReconfigurationMessage::NetworkReconfig(hello_reply_message),
+                    header.from(),
+                    true,
+                );
 
-            if self.network_view.handle_node_introduced(node.clone()) {
-                info!("Node {:?} has joined the network and we hadn't seen it before, sending network update to the network layer", node.node_id());
+                if self.network_view.handle_node_introduced(node.clone()) {
+                    info!("Node {:?} has joined the network and we hadn't seen it before, sending network update to the network layer", node.node_id());
 
-                let public_key = self.network_view.get_pk_for_node(&node.node_id()).unwrap();
+                    let public_key = self.network_view.get_pk_for_node(&node.node_id()).unwrap();
 
-                let connection_permitted =
-                    ReconfigurationNetworkUpdateMessage::NodeConnectionPermitted(
-                        node.node_id(),
-                        node.node_type(),
-                        public_key,
-                    );
+                    let connection_permitted =
+                        ReconfigurationNetworkUpdateMessage::NodeConnectionPermitted(
+                            node.node_id(),
+                            node.node_type(),
+                            public_key,
+                        );
 
-                reconf_msg_handler.send_reconfiguration_update(connection_permitted);
+                    let _ = reconf_msg_handler.send_reconfiguration_update(connection_permitted);
+                } else {
+                    info!("Node {:?} has joined the network but we had already seen it before", node.node_id());
+                }
             }
-        } else {
-            error!(
-                "Received a network hello request from {:?} but it was not valid",
-                header.from()
+            Err(err) => {
+                error!(
+                "Received a network hello request from {:?} but it was not valid due to {:?}",
+                header.from(),
+                    err
             );
+            }
         }
     }
 
@@ -927,7 +935,7 @@ impl GeneralNodeInfo {
         let target = header.from();
 
         let network_view = self.network_view.clone();
-        
+
         let network_update = self.network_update.clone();
 
         threadpool::execute(move || {
@@ -942,12 +950,14 @@ impl GeneralNodeInfo {
 
             let reconfig_message = ReconfigurationMessage::NetworkReconfig(message);
 
-            debug!("Responding to network join request a network join response to {:?} with message {:?}", target, reconfig_message);
+            info!("Responding to network join request a network join response to {:?} with message {:?}", target, reconfig_message);
 
             let _ = network
                 .outgoing_stub()
                 .send_signed(reconfig_message, target, true);
 
+            let _ = network_update.send(NodeConnectionUpdateMessage::NodeConnected(triple.clone()));
+            
             if network_view.handle_node_introduced(triple.clone()) {
                 info!("Node {:?} has joined the network and we hadn't seen it before, sending network update to the network layer", triple.node_id());
 
@@ -961,29 +971,28 @@ impl GeneralNodeInfo {
                     );
 
                 let _ = reconf_msg_handler.send_reconfiguration_update(connection_permitted);
-                
-                let _ = network_update.send(NodeConnectionUpdateMessage::NodeConnected(triple));
+
+            } else {
+                info!("Node {:?} has joined the network but we had already seen it before", triple.node_id());
             }
         });
 
         NetworkProtocolResponse::Nil
     }
 
-    fn move_to_joining(&mut self, contacted: usize){
+    fn move_to_joining(&mut self, contacted: usize) {
         self.current_state = NetworkNodeState::JoiningNetwork {
             contacted,
             responded: Default::default(),
             certificates: Default::default(),
         };
-
     }
 
-    fn move_to_intro_phase(&mut self)  {
+    fn move_to_intro_phase(&mut self) {
         self.current_state = NetworkNodeState::IntroductionPhase {
             contacted: 0,
             responded: Default::default(),
         };
-
     }
 
     fn move_to_stable(&mut self) {
@@ -994,7 +1003,20 @@ impl GeneralNodeInfo {
         Self {
             network_view,
             current_state,
-            network_update
+            network_update,
         }
     }
+}
+
+#[derive(Error, Debug)]
+pub enum ValidNetworkHelloError {
+    #[error("One or more signatures is invalid.")]
+    InvalidSignatures,
+    #[error("Non boostrap certificate")]
+    NonBootstrapCertificate,
+    #[error("Not enough certificates {required:?} vs provided {provided:?}")]
+    NotEnoughCertificates {
+        required: usize,
+        provided: usize,
+    },
 }
