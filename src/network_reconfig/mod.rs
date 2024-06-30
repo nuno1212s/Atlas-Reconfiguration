@@ -1,35 +1,40 @@
-use std::collections::{BTreeMap, BTreeSet};
 use std::collections::btree_map::Entry;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, RwLock};
 
 use futures::future::join_all;
 use futures::SinkExt;
-use tracing::{debug, error, info, warn};
 use thiserror::Error;
+use tracing::{debug, error, info, warn};
 
-use atlas_common::error::*;
-use atlas_common::{async_runtime as rt, quiet_unwrap, threadpool};
 use atlas_common::channel::{ChannelSyncTx, OneShotRx};
 use atlas_common::crypto::signature;
 use atlas_common::crypto::signature::{KeyPair, PublicKey};
+use atlas_common::error::*;
 use atlas_common::node_id::{NodeId, NodeType};
 use atlas_common::ordering::SeqNo;
 use atlas_common::peer_addr::PeerAddr;
+use atlas_common::{async_runtime as rt, quiet_unwrap, threadpool};
 use atlas_communication::byte_stub::connections::NetworkConnectionController;
 use atlas_communication::message::Header;
-use atlas_communication::reconfiguration::{NetworkInformationProvider, NodeInfo, ReconfigurationNetworkCommunication, ReconfigurationNetworkUpdate, ReconfigurationNetworkUpdateMessage};
+use atlas_communication::reconfiguration::{
+    NetworkInformationProvider, NodeInfo, ReconfigurationNetworkCommunication,
+    ReconfigurationNetworkUpdate, ReconfigurationNetworkUpdateMessage,
+};
 use atlas_communication::stub::{ModuleOutgoingStub, RegularNetworkStub};
-use atlas_core::reconfiguration_protocol::{NodeConnectionUpdateMessage, ReconfigurationCommunicationHandles};
+use atlas_core::reconfiguration_protocol::{
+    NodeConnectionUpdateMessage, ReconfigurationCommunicationHandles,
+};
 use atlas_core::timeouts::timeout::TimeoutModHandle;
 use atlas_core::timeouts::TimeoutID;
 
-use crate::{NetworkProtocolResponse, SeqNoGen, TIMEOUT_DUR};
 use crate::config::ReconfigurableNetworkConfig;
 use crate::message::{
-    KnownNodesMessage, NetworkJoinCert, NetworkJoinRejectionReason, NetworkJoinResponseMessage,
-    NetworkReconfigMessage, NetworkReconfigMessageType, ReconfData, ReconfigurationMessage,
-    signatures,
+    signatures, KnownNodesMessage, NetworkJoinCert, NetworkJoinRejectionReason,
+    NetworkJoinResponseMessage, NetworkReconfigMessage, NetworkReconfigMessageType, ReconfData,
+    ReconfigurationMessage,
 };
+use crate::{NetworkProtocolResponse, SeqNoGen, TIMEOUT_DUR};
 
 /// The reconfiguration module.
 /// Provides various utilities for allowing reconfiguration of the network
@@ -37,7 +42,7 @@ use crate::message::{
 ///
 /// This module will then be used by the parts of the system which must be reconfigurable
 pub type NetworkPredicate =
-fn(Arc<NetworkInfo>, NodeInfo) -> OneShotRx<Option<NetworkJoinRejectionReason>>;
+    fn(Arc<NetworkInfo>, NodeInfo) -> OneShotRx<Option<NetworkJoinRejectionReason>>;
 
 /// Our current view of the network and the information about our own node
 /// This is the node data for the network information. This does not
@@ -417,8 +422,8 @@ impl GeneralNodeInfo {
         network_node: &Arc<NT>,
         timeouts: &TimeoutModHandle,
     ) -> Result<NetworkProtocolResponse>
-        where
-            NT: RegularNetworkStub<ReconfData> + 'static,
+    where
+        NT: RegularNetworkStub<ReconfData> + 'static,
     {
         match &mut self.current_state {
             NetworkNodeState::Init => {
@@ -458,7 +463,8 @@ impl GeneralNodeInfo {
                 }
 
                 for (node, conn_results) in node_results {
-                    let conn_results = quiet_unwrap!(conn_results, Ok(NetworkProtocolResponse::Nil));
+                    let conn_results =
+                        quiet_unwrap!(conn_results, Ok(NetworkProtocolResponse::Nil));
 
                     for conn_result in conn_results {
                         if let Err(err) = conn_result.recv().unwrap() {
@@ -509,8 +515,8 @@ impl GeneralNodeInfo {
         network_node: &Arc<NT>,
         timeouts: &TimeoutModHandle,
     ) -> NetworkProtocolResponse
-        where
-            NT: RegularNetworkStub<ReconfData> + 'static,
+    where
+        NT: RegularNetworkStub<ReconfData> + 'static,
     {
         match &mut self.current_state {
             NetworkNodeState::JoiningNetwork { .. } => {
@@ -621,8 +627,8 @@ impl GeneralNodeInfo {
         header: Header,
         message: NetworkReconfigMessage,
     ) -> NetworkProtocolResponse
-        where
-            NT: RegularNetworkStub<ReconfData> + 'static,
+    where
+        NT: RegularNetworkStub<ReconfData> + 'static,
     {
         let (seq, message) = message.into_inner();
 
@@ -869,7 +875,10 @@ impl GeneralNodeInfo {
     ) where
         NT: RegularNetworkStub<ReconfData> + 'static,
     {
-        match self.network_view.is_valid_network_hello(node.clone(), confirmations) {
+        match self
+            .network_view
+            .is_valid_network_hello(node.clone(), confirmations)
+        {
             Ok(_) => {
                 info!("Received a node hello message from node {:?} with enough certificates. Adding it to our known nodes", node);
 
@@ -904,15 +913,18 @@ impl GeneralNodeInfo {
 
                     let _ = reconf_msg_handler.send_reconfiguration_update(connection_permitted);
                 } else {
-                    info!("Node {:?} has joined the network but we had already seen it before", node.node_id());
+                    info!(
+                        "Node {:?} has joined the network but we had already seen it before",
+                        node.node_id()
+                    );
                 }
             }
             Err(err) => {
                 error!(
-                "Received a network hello request from {:?} but it was not valid due to {:?}",
-                header.from(),
+                    "Received a network hello request from {:?} but it was not valid due to {:?}",
+                    header.from(),
                     err
-            );
+                );
             }
         }
     }
@@ -925,8 +937,8 @@ impl GeneralNodeInfo {
         seq: SeqNo,
         node: NodeInfo,
     ) -> NetworkProtocolResponse
-        where
-            NT: RegularNetworkStub<ReconfData> + 'static,
+    where
+        NT: RegularNetworkStub<ReconfData> + 'static,
     {
         let network = network_node.clone();
 
@@ -957,7 +969,7 @@ impl GeneralNodeInfo {
                 .send_signed(reconfig_message, target, true);
 
             let _ = network_update.send(NodeConnectionUpdateMessage::NodeConnected(triple.clone()));
-            
+
             if network_view.handle_node_introduced(triple.clone()) {
                 info!("Node {:?} has joined the network and we hadn't seen it before, sending network update to the network layer", triple.node_id());
 
@@ -971,9 +983,11 @@ impl GeneralNodeInfo {
                     );
 
                 let _ = reconf_msg_handler.send_reconfiguration_update(connection_permitted);
-
             } else {
-                info!("Node {:?} has joined the network but we had already seen it before", triple.node_id());
+                info!(
+                    "Node {:?} has joined the network but we had already seen it before",
+                    triple.node_id()
+                );
             }
         });
 
@@ -999,7 +1013,11 @@ impl GeneralNodeInfo {
         self.current_state = NetworkNodeState::StableMember;
     }
 
-    pub fn new(network_view: Arc<NetworkInfo>, current_state: NetworkNodeState, network_update: ChannelSyncTx<NodeConnectionUpdateMessage>) -> Self {
+    pub fn new(
+        network_view: Arc<NetworkInfo>,
+        current_state: NetworkNodeState,
+        network_update: ChannelSyncTx<NodeConnectionUpdateMessage>,
+    ) -> Self {
         Self {
             network_view,
             current_state,
@@ -1015,8 +1033,5 @@ pub enum ValidNetworkHelloError {
     #[error("Non boostrap certificate")]
     NonBootstrapCertificate,
     #[error("Not enough certificates {required:?} vs provided {provided:?}")]
-    NotEnoughCertificates {
-        required: usize,
-        provided: usize,
-    },
+    NotEnoughCertificates { required: usize, provided: usize },
 }

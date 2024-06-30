@@ -20,8 +20,7 @@ use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_communication::message::Header;
 use atlas_communication::reconfiguration::{
-    NetworkInformationProvider, NetworkUpdatedMessage,
-    ReconfigurationNetworkCommunication,
+    NetworkInformationProvider, NetworkUpdatedMessage, ReconfigurationNetworkCommunication,
 };
 use atlas_communication::stub::{ModuleIncomingStub, RegularNetworkStub};
 use atlas_core::reconfiguration_protocol::{
@@ -179,10 +178,11 @@ where
 
             match self.node_state {
                 ReconfigurableNodeState::NetworkReconfigurationProtocol => {
-                    match self
-                        .node
-                        .iterate(&mut self.seq_gen, &self.network_node, &self.timeouts)?
-                    {
+                    match self.node.iterate(
+                        &mut self.seq_gen,
+                        &self.network_node,
+                        &self.timeouts,
+                    )? {
                         NetworkProtocolResponse::Done => {
                             self.switch_state(
                                 ReconfigurableNodeState::QuorumReconfigurationProtocol,
@@ -369,7 +369,11 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocolHandle {
     {
         let (network_update_handle, node_type) = comm_handle.into();
 
-        let general_info = GeneralNodeInfo::new(information.clone(), NetworkNodeState::Init, network_update_handle);
+        let general_info = GeneralNodeInfo::new(
+            information.clone(),
+            NetworkNodeState::Init,
+            network_update_handle,
+        );
 
         let quorum_view = Node::init_observer(information.bootstrap_nodes().clone());
 
