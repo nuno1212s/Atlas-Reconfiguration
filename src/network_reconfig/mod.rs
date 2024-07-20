@@ -901,23 +901,23 @@ impl GeneralNodeInfo {
 
                 if self.network_view.handle_node_introduced(node.clone()) {
                     info!("Node {:?} has joined the network and we hadn't seen it before, sending network update to the network layer", node.node_id());
-
-                    let public_key = self.network_view.get_pk_for_node(&node.node_id()).unwrap();
-
-                    let connection_permitted =
-                        ReconfigurationNetworkUpdateMessage::NodeConnectionPermitted(
-                            node.node_id(),
-                            node.node_type(),
-                            public_key,
-                        );
-
-                    let _ = reconf_msg_handler.send_reconfiguration_update(connection_permitted);
                 } else {
                     info!(
                         "Node {:?} has joined the network but we had already seen it before",
                         node.node_id()
                     );
                 }
+
+                let public_key = self.network_view.get_pk_for_node(&node.node_id()).unwrap();
+
+                let connection_permitted =
+                    ReconfigurationNetworkUpdateMessage::NodeConnectionPermitted(
+                        node.node_id(),
+                        node.node_type(),
+                        public_key,
+                    );
+
+                let _ = reconf_msg_handler.send_reconfiguration_update(connection_permitted);
             }
             Err(err) => {
                 error!(

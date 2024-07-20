@@ -1,7 +1,7 @@
-use std::fmt::{Debug, Formatter};
 use atlas_common::node_id::NodeType;
 use atlas_common::{crypto::signature::KeyPair, node_id::NodeId, peer_addr::PeerAddr};
 use atlas_communication::reconfiguration::NodeInfo;
+use std::fmt::{Debug, Formatter};
 
 /// The configuration for the reconfiguration network.
 pub struct ReconfigurableNetworkConfig {

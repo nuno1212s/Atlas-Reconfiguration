@@ -12,11 +12,11 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
-use atlas_common::{channel, unwrap_channel};
 use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
+use atlas_common::{channel, unwrap_channel};
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::reconfiguration::{
     NetworkInformationProvider, NetworkUpdatedMessage, ReconfigurationNetworkCommunication,
@@ -207,7 +207,7 @@ where
                     self.node_type.iterate(&node_wrap)?;
                 }
             }
-            
+
             self.receive_from_incoming_channels()?;
         }
     }
@@ -230,7 +230,10 @@ where
         }
     }
 
-    fn handle_network_message(&mut self, network_message: StoredMessage<ReconfigurationMessage>) -> Result<()>
+    fn handle_network_message(
+        &mut self,
+        network_message: StoredMessage<ReconfigurationMessage>,
+    ) -> Result<()>
     where
         NT: RegularNetworkStub<ReconfData> + 'static,
     {
@@ -238,11 +241,26 @@ where
 
         match message {
             ReconfigurationMessage::NetworkReconfig(network_reconfig) => {
-                if self.node.is_response_to_request(&self.seq_gen, &header, network_reconfig.sequence_number(), network_reconfig.message_type()) {
-                    self.timeouts.ack_received(TimeoutID::SeqNoBased(network_reconfig.sequence_number()), header.from())?;
+                if self.node.is_response_to_request(
+                    &self.seq_gen,
+                    &header,
+                    network_reconfig.sequence_number(),
+                    network_reconfig.message_type(),
+                ) {
+                    self.timeouts.ack_received(
+                        TimeoutID::SeqNoBased(network_reconfig.sequence_number()),
+                        header.from(),
+                    )?;
                 }
 
-                match self.node.handle_network_reconfig_msg(&mut self.seq_gen, &self.network_node, &self.reconfig_network, &self.timeouts, header, network_reconfig) {
+                match self.node.handle_network_reconfig_msg(
+                    &mut self.seq_gen,
+                    &self.network_node,
+                    &self.reconfig_network,
+                    &self.timeouts,
+                    header,
+                    network_reconfig,
+                ) {
                     NetworkProtocolResponse::Done => {
                         self.switch_state(ReconfigurableNodeState::QuorumReconfigurationProtocol);
                     }
@@ -250,12 +268,14 @@ where
                 };
             }
             ReconfigurationMessage::QuorumConfig(quorum_msg) => {
-
                 //TODO: Handle timeouts
 
                 let node_wrap = QuorumConfigNetworkWrapper::from(self.network_node.clone());
 
-                match self.node_type.handle_message(&node_wrap, header, quorum_msg)? {
+                match self
+                    .node_type
+                    .handle_message(&node_wrap, header, quorum_msg)?
+                {
                     QuorumProtocolResponse::DoneInitialSetup => {
                         debug!("We have finished the initial setup of the quorum protocol, switching to stable");
 
