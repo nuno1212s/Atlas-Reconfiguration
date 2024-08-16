@@ -83,7 +83,7 @@ impl NetworkInfo {
                 key_pair.public_key().into(),
                 our_address.clone(),
             ),
-            key_pair: Arc::new(key_pair),
+            key_pair,
             bootstrap_nodes: boostrap_nodes,
             known_nodes: RwLock::new(KnownNodes::from_known_list(known_nodes)),
             predicates: Vec::new(),
