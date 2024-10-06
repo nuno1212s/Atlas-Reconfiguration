@@ -3,12 +3,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, RwLock};
 
 use futures::future::join_all;
-use futures::SinkExt;
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
-use atlas_common::channel::{ChannelSyncTx, OneShotRx};
-use atlas_common::crypto::signature;
+use atlas_common::channel::sync::ChannelSyncTx;
+use atlas_common::channel::oneshot::OneShotRx;
 use atlas_common::crypto::signature::{KeyPair, PublicKey};
 use atlas_common::error::*;
 use atlas_common::node_id::{NodeId, NodeType};
@@ -23,7 +22,7 @@ use atlas_communication::reconfiguration::{
 };
 use atlas_communication::stub::{ModuleOutgoingStub, RegularNetworkStub};
 use atlas_core::reconfiguration_protocol::{
-    NodeConnectionUpdateMessage, ReconfigurationCommunicationHandles,
+    NodeConnectionUpdateMessage,
 };
 use atlas_core::timeouts::timeout::TimeoutModHandle;
 use atlas_core::timeouts::TimeoutID;
@@ -606,9 +605,9 @@ impl GeneralNodeInfo {
 
     pub(super) fn is_response_to_request(
         &self,
-        seq_gen: &SeqNoGen,
-        header: &Header,
-        seq: SeqNo,
+        _seq_gen: &SeqNoGen,
+        _header: &Header,
+        _seq: SeqNo,
         message: &NetworkReconfigMessageType,
     ) -> bool {
         matches!(
@@ -691,7 +690,7 @@ impl GeneralNodeInfo {
 
                                     certificates.push((header.from(), signature));
 
-                                    if certificates.len() >= (*contacted * 2 / 3) + 1 {
+                                    if certificates.len() > (*contacted * 2 / 3) {
                                         let known_nodes = self
                                             .network_view
                                             .known_nodes()
@@ -752,7 +751,7 @@ impl GeneralNodeInfo {
 
                         NetworkProtocolResponse::Nil
                     }
-                    NetworkReconfigMessageType::NetworkHelloReply(known_nodes) => {
+                    NetworkReconfigMessageType::NetworkHelloReply(_known_nodes) => {
                         // Ignored as we are not yet in this phase
                         NetworkProtocolResponse::Nil
                     }
@@ -815,7 +814,7 @@ impl GeneralNodeInfo {
                             }
                         }
 
-                        if responded.len() >= (*contacted * 2 / 3) + 1 {
+                        if responded.len() > (*contacted * 2 / 3) {
                             self.move_to_stable();
 
                             return NetworkProtocolResponse::Done;

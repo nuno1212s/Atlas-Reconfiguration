@@ -45,7 +45,7 @@ impl Operation for NotifyClientOperation {
     fn iterate<NT>(
         &mut self,
         node: &mut InternalNode,
-        network: &NT,
+        _network: &NT,
     ) -> atlas_common::error::Result<OperationResponse>
     where
         NT: QuorumConfigNetworkNode + 'static,
@@ -68,10 +68,10 @@ impl Operation for NotifyClientOperation {
 
     fn handle_received_message<NT>(
         &mut self,
-        node: &mut InternalNode,
-        network: &NT,
-        header: Header,
-        message: OperationMessage,
+        _node: &mut InternalNode,
+        _network: &NT,
+        _header: Header,
+        _message: OperationMessage,
     ) -> atlas_common::error::Result<OperationResponse>
     where
         NT: QuorumConfigNetworkNode + 'static,
@@ -81,9 +81,9 @@ impl Operation for NotifyClientOperation {
 
     fn handle_quorum_response<NT>(
         &mut self,
-        node: &mut InternalNode,
-        network: &NT,
-        quorum_response: QuorumReconfigurationResponse,
+        _node: &mut InternalNode,
+        _network: &NT,
+        _quorum_response: QuorumReconfigurationResponse,
     ) -> atlas_common::error::Result<OperationResponse>
     where
         NT: QuorumConfigNetworkNode + 'static,
@@ -93,8 +93,8 @@ impl Operation for NotifyClientOperation {
 
     fn finish<NT>(
         self,
-        observer: &mut InternalNode,
-        network: &NT,
+        _observer: &mut InternalNode,
+        _network: &NT,
     ) -> atlas_common::error::Result<()>
     where
         NT: QuorumConfigNetworkNode + 'static,

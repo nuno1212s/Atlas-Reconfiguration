@@ -10,14 +10,14 @@ use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_communication::message::{Header, StoredMessage};
 
-use crate::message::ThresholdMessages::DkgAck;
+
 use crate::message::{
-    OrderedBCastMessage, ReconfData, ReconfigurationMessage, ThresholdDKGArgs, ThresholdMessages,
+    OrderedBCastMessage, ThresholdDKGArgs, ThresholdMessages,
 };
 use crate::threshold_crypto::network::ThresholdNetwork;
 use crate::threshold_crypto::ordered_bcast::OrderedBroadcast;
 use crate::threshold_crypto::threshold_negotiation::network_bridge::{
-    DkgAckSendNode, DkgAckSendNodeRef, DkgDealerSendNode, DkgDealerSendNodeRef,
+    DkgAckSendNodeRef, DkgDealerSendNodeRef,
 };
 
 mod network_bridge;
@@ -214,7 +214,7 @@ impl JoiningThresholdReplica {
             }
             JoiningThresholdReplicaState::Init => {}
             JoiningThresholdReplicaState::PartExchange(exchange) => match message {
-                ThresholdMessages::TriggerDKG(dk) => {}
+                ThresholdMessages::TriggerDKG(_dk) => {}
                 ThresholdMessages::DkgDealer(dealer_part) => {
                     exchange.handle_message(&DkgDealerSendNodeRef::from(node), header, dealer_part);
                 }
@@ -223,7 +223,7 @@ impl JoiningThresholdReplica {
                     .queue_message(header, ThresholdMessages::DkgAck(ack_parts)),
             },
             JoiningThresholdReplicaState::AckExchange(ack_part) => match message {
-                ThresholdMessages::TriggerDKG(dk) => {}
+                ThresholdMessages::TriggerDKG(_dk) => {}
                 ThresholdMessages::DkgDealer(dealer_part) => self
                     .pending_messages
                     .queue_message(header, ThresholdMessages::DkgDealer(dealer_part)),

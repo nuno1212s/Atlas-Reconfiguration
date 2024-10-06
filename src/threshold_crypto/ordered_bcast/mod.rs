@@ -1,7 +1,7 @@
 pub mod network;
 
 use std::collections::{BTreeSet, VecDeque};
-use std::sync::Arc;
+
 
 use atlas_common::crypto::hash::Digest;
 use tracing::{debug, warn};
@@ -9,7 +9,7 @@ use tracing::{debug, warn};
 use atlas_common::node_id::NodeId;
 use atlas_communication::message::{Header, StoredMessage};
 
-use crate::message::{OrderedBCastMessage, ReconfData, ReconfigurationMessage};
+use crate::message::{OrderedBCastMessage};
 use crate::threshold_crypto::ordered_bcast::network::OrderedBCastNode;
 
 /// Ordering of messages received our of order
@@ -160,7 +160,7 @@ where
                     warn!("Received duplicate vote from node {:?}", header.from());
                 }
             }
-            OrderedBCastPhase::Done(order) => {
+            OrderedBCastPhase::Done(_order) => {
                 debug!(
                     "Received message from node {:?} after broadcast was done",
                     header.from()
@@ -173,7 +173,7 @@ where
     where
         NT: OrderedBCastNode<T>,
     {
-        node.broadcast_ordered_bcast_message(
+        let _ = node.broadcast_ordered_bcast_message(
             OrderedBCastMessage::Order(order),
             self.members.clone().into_iter(),
         );
@@ -183,7 +183,7 @@ where
     where
         NT: OrderedBCastNode<T>,
     {
-        node.broadcast_ordered_bcast_message(
+        let _ = node.broadcast_ordered_bcast_message(
             OrderedBCastMessage::OrderVote(digest),
             self.members.clone().into_iter(),
         );

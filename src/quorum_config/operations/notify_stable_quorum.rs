@@ -3,7 +3,7 @@ use crate::quorum_config::network::QuorumConfigNetworkNode;
 use crate::quorum_config::operations::{
     Operation, OperationExecutionCandidateError, OperationResponse,
 };
-use crate::quorum_config::{InternalNode, NodeStatusType};
+use crate::quorum_config::{InternalNode};
 use atlas_common::node_id::NodeType;
 use atlas_common::Err;
 use atlas_communication::message::Header;
@@ -53,7 +53,7 @@ impl Operation for NotifyQuorumOperation {
     fn iterate<NT>(
         &mut self,
         node: &mut InternalNode,
-        network: &NT,
+        _network: &NT,
     ) -> atlas_common::error::Result<OperationResponse>
     where
         NT: QuorumConfigNetworkNode + 'static,
@@ -78,10 +78,10 @@ impl Operation for NotifyQuorumOperation {
 
     fn handle_received_message<NT>(
         &mut self,
-        node: &mut InternalNode,
-        network: &NT,
-        header: Header,
-        message: OperationMessage,
+        _node: &mut InternalNode,
+        _network: &NT,
+        _header: Header,
+        _message: OperationMessage,
     ) -> atlas_common::error::Result<OperationResponse>
     where
         NT: QuorumConfigNetworkNode + 'static,
@@ -91,8 +91,8 @@ impl Operation for NotifyQuorumOperation {
 
     fn handle_quorum_response<NT>(
         &mut self,
-        node: &mut InternalNode,
-        network: &NT,
+        _node: &mut InternalNode,
+        _network: &NT,
         quorum_response: QuorumReconfigurationResponse,
     ) -> atlas_common::error::Result<OperationResponse>
     where
@@ -116,8 +116,8 @@ impl Operation for NotifyQuorumOperation {
 
     fn finish<NT>(
         self,
-        observer: &mut InternalNode,
-        network: &NT,
+        _observer: &mut InternalNode,
+        _network: &NT,
     ) -> atlas_common::error::Result<()>
     where
         NT: QuorumConfigNetworkNode + 'static,

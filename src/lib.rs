@@ -1,18 +1,18 @@
 #![feature(extract_if)]
 #![feature(btree_extract_if)]
+#![allow(dead_code)]
 
 extern crate core;
 
 use getset::Getters;
 use lazy_static::lazy_static;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc};
 use std::time::Duration;
 
-#[cfg(feature = "serialize_serde")]
-use serde::{Deserialize, Serialize};
+
 use tracing::{debug, error, info, warn};
 
-use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
+use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
@@ -21,13 +21,13 @@ use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::reconfiguration::{
     NetworkInformationProvider, NetworkUpdatedMessage, ReconfigurationNetworkCommunication,
 };
-use atlas_communication::stub::{ModuleIncomingStub, RegularNetworkStub};
+use atlas_communication::stub::{ RegularNetworkStub};
 use atlas_core::reconfiguration_protocol::{
-    NodeConnectionUpdateMessage, QuorumJoinCert, ReconfigResponse, ReconfigurableNodeType,
+     QuorumJoinCert, ReconfigResponse,
     ReconfigurationCommunicationHandles, ReconfigurationProtocol,
 };
 use atlas_core::timeouts::timeout::{ModTimeout, TimeoutModHandle, TimeoutableMod};
-use atlas_core::timeouts::{Timeout, TimeoutID, TimeoutIdentification, TimeoutsHandle};
+use atlas_core::timeouts::{ TimeoutID,};
 
 use crate::config::ReconfigurableNetworkConfig;
 use crate::message::{ReconfData, ReconfigMessage, ReconfigurationMessage};
@@ -216,7 +216,7 @@ where
     where
         NT: RegularNetworkStub<ReconfData> + 'static,
     {
-        channel::sync_select_biased! {
+        channel::sync::sync_select_biased! {
             recv(unwrap_channel!(self.channel_rx)) -> orchestrator_message => {
                 self.handle_message_from_orchestrator(orchestrator_message?)
             }
@@ -371,7 +371,7 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocolHandle {
         timeouts: TimeoutModHandle,
         comm_handle: ReconfigurationCommunicationHandles,
         network_updater: ReconfigurationNetworkCommunication,
-        min_stable_node_count: usize,
+        _min_stable_node_count: usize,
     ) -> Result<Self>
     where
         NT: RegularNetworkStub<Self::Serialization> + 'static,
@@ -390,7 +390,7 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocolHandle {
         let our_info = information.own_node_info().clone();
 
         let (channel_tx, channel_rx) =
-            channel::new_bounded_sync(128, Some("Reconfiguration message channel"));
+            channel::sync::new_bounded_sync(128, Some("Reconfiguration message channel"));
 
         let cpy_obs = quorum_view.clone();
 
@@ -444,7 +444,7 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocolHandle {
         (view.quorum_members().clone(), view.f())
     }
 
-    fn is_join_certificate_valid(&self, certificate: &QuorumJoinCert<Self::Serialization>) -> bool {
+    fn is_join_certificate_valid(&self, _certificate: &QuorumJoinCert<Self::Serialization>) -> bool {
         //TODO: Analyse the veracity of this join certificate according to the information we have on the
         // current quorum
         true

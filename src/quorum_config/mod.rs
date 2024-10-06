@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
-use atlas_common::channel::{ChannelSyncRx, ChannelSyncTx};
+use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::collections::HashMap;
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
@@ -484,7 +484,7 @@ impl OnGoingOperations {
             }
             NodeStatusType::QuorumNode {
                 current_state,
-                quorum_responses,
+                
                 ..
             } => {
                 if let ReplicaState::Awaiting = current_state {

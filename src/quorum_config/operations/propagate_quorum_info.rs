@@ -16,7 +16,7 @@ pub enum OperationState {
 }
 
 impl PropagateQuorumInformationOp {
-    pub fn execute<NT>(&mut self, node: &NT)
+    pub fn execute<NT>(&mut self, _node: &NT)
     where
         NT: QuorumConfigNetworkNode + 'static,
     {

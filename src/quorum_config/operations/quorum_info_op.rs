@@ -1,5 +1,5 @@
 use crate::message::{
-    OperationMessage, QuorumJoinReconfMessages, QuorumJoinResponse, QuorumObtainInfoOpMessage,
+    OperationMessage, QuorumObtainInfoOpMessage,
     QuorumViewCert,
 };
 use crate::quorum_config::network::QuorumConfigNetworkNode;
@@ -9,11 +9,10 @@ use crate::quorum_config::operations::{
 use crate::quorum_config::{InternalNode, QuorumView};
 use atlas_common::crypto::hash::Digest;
 use atlas_common::node_id::NodeId;
-use atlas_common::ordering::{Orderable, SeqNo};
 use atlas_common::Err;
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_core::reconfiguration_protocol::{
-    QuorumReconfigurationMessage, QuorumReconfigurationResponse,
+    QuorumReconfigurationResponse,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
@@ -101,7 +100,7 @@ impl ObtainQuorumInfoOP {
         }
     }
 
-    fn from_operation_message(msg: OperationMessage) -> (QuorumObtainInfoOpMessage) {
+    fn from_operation_message(msg: OperationMessage) -> QuorumObtainInfoOpMessage {
         match msg {
             OperationMessage::QuorumInfoOp(msg) => msg,
             _ => unreachable!("Received wrong message type"),
@@ -112,13 +111,13 @@ impl ObtainQuorumInfoOP {
 impl Operation for ObtainQuorumInfoOP {
     const OP_NAME: &'static str = "ObtainQuorumInfo";
 
-    fn can_execute(observer: &InternalNode) -> Result<(), OperationExecutionCandidateError> {
+    fn can_execute(_observer: &InternalNode) -> Result<(), OperationExecutionCandidateError> {
         Ok(())
     }
 
     fn iterate<NT>(
         &mut self,
-        node: &mut InternalNode,
+        _node: &mut InternalNode,
         network: &NT,
     ) -> atlas_common::error::Result<OperationResponse>
     where
@@ -142,8 +141,8 @@ impl Operation for ObtainQuorumInfoOP {
 
     fn handle_received_message<NT>(
         &mut self,
-        node: &mut InternalNode,
-        network: &NT,
+        _node: &mut InternalNode,
+        _network: &NT,
         header: Header,
         message: OperationMessage,
     ) -> atlas_common::error::Result<OperationResponse> {
@@ -199,9 +198,9 @@ impl Operation for ObtainQuorumInfoOP {
 
     fn handle_quorum_response<NT>(
         &mut self,
-        node: &mut InternalNode,
-        network: &NT,
-        quorum_response: QuorumReconfigurationResponse,
+        _node: &mut InternalNode,
+        _network: &NT,
+        _quorum_response: QuorumReconfigurationResponse,
     ) -> atlas_common::error::Result<OperationResponse> {
         Ok(OperationResponse::Processing)
     }
@@ -209,7 +208,7 @@ impl Operation for ObtainQuorumInfoOP {
     fn finish<NT>(
         self,
         observer: &mut InternalNode,
-        network: &NT,
+        _network: &NT,
     ) -> atlas_common::error::Result<()> {
         let view = self.finalize()?;
 

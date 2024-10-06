@@ -4,7 +4,7 @@ use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
 use atlas_common::error::*;
-use atlas_common::{quiet_unwrap, Err};
+use atlas_common::{Err};
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_core::reconfiguration_protocol::QuorumReconfigurationResponse;
 
@@ -17,8 +17,7 @@ use crate::quorum_config::operations::quorum_info_op::ObtainQuorumInfoOP;
 use crate::quorum_config::operations::{
     Operation, OperationExecutionCandidateError, OperationResponse,
 };
-use crate::quorum_config::QuorumCert;
-use crate::quorum_config::{get_quorum_for_n, InternalNode, QuorumCertPart, QuorumView};
+use crate::quorum_config::{get_quorum_for_n, InternalNode, QuorumView};
 
 /// The operation to enter the quorum
 pub struct EnterQuorumOperation {
@@ -109,7 +108,7 @@ impl EnterQuorumOperation {
 
     pub fn handle_locked_vote_received<NT>(
         &mut self,
-        node: &mut InternalNode,
+        _node: &mut InternalNode,
         network: &NT,
         header: Header,
         vote: QuorumJoinResponse,
@@ -175,7 +174,7 @@ impl EnterQuorumOperation {
 
     pub fn handle_commit_vote_received<NT>(
         &mut self,
-        node: &mut InternalNode,
+        _node: &mut InternalNode,
         network: &NT,
         header: Header,
         vote: QuorumCommitResponse,
@@ -357,9 +356,9 @@ impl Operation for EnterQuorumOperation {
 
     fn handle_quorum_response<NT>(
         &mut self,
-        node: &mut InternalNode,
-        network: &NT,
-        quorum_response: QuorumReconfigurationResponse,
+        _node: &mut InternalNode,
+        _network: &NT,
+        _quorum_response: QuorumReconfigurationResponse,
     ) -> Result<OperationResponse>
     where
         NT: QuorumConfigNetworkNode + 'static,
@@ -367,7 +366,7 @@ impl Operation for EnterQuorumOperation {
         todo!()
     }
 
-    fn finish<NT>(mut self, observer: &mut InternalNode, network: &NT) -> Result<()>
+    fn finish<NT>(mut self, observer: &mut InternalNode, _network: &NT) -> Result<()>
     where
         NT: QuorumConfigNetworkNode + 'static,
     {

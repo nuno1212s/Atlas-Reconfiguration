@@ -1,4 +1,4 @@
-use crate::message::{OperationMessage, OrderedBCastMessage};
+use crate::message::{OrderedBCastMessage};
 use atlas_common::node_id::NodeId;
 
 pub trait OrderedBCastNode<T> {

@@ -295,7 +295,7 @@ impl From<&KnownNodes> for KnownNodesMessage {
         value
             .node_info()
             .iter()
-            .for_each(|(node_id, node_info)| known_nodes.push(node_info.clone()));
+            .for_each(|(_node_id, node_info)| known_nodes.push(node_info.clone()));
 
         KnownNodesMessage { nodes: known_nodes }
     }
