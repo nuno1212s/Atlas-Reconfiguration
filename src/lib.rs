@@ -16,7 +16,7 @@ use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
-use atlas_common::{channel, unwrap_channel};
+use atlas_common::{channel, exhaust_and_consume, unwrap_channel};
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::reconfiguration::{
     NetworkInformationProvider, NetworkUpdatedMessage, ReconfigurationNetworkCommunication,
@@ -211,8 +211,16 @@ where
             self.receive_from_incoming_channels()?;
         }
     }
-
+    
     fn receive_from_incoming_channels(&mut self) -> Result<()>
+    where
+        NT: RegularNetworkStub<ReconfData> + 'static,
+    {
+        self.receive_from_incoming_channels_exhaust()
+    }
+    
+    
+    /*fn receive_from_incoming_channels_select(&mut self) -> Result<()>
     where
         NT: RegularNetworkStub<ReconfData> + 'static,
     {
@@ -228,6 +236,18 @@ where
             }
             default(*MESSAGE_SLEEP) => Ok(())
         }
+    }*/
+    
+    fn receive_from_incoming_channels_exhaust(&mut self) -> Result<()>
+        where NT: RegularNetworkStub<ReconfData> + 'static, {
+        
+        exhaust_and_consume!(self.channel_rx, self, handle_message_from_orchestrator);
+        
+        exhaust_and_consume!(self.reconfig_network.network_update_receiver(), self, handle_network_update_message);
+        
+        exhaust_and_consume!(self.network_node.incoming_stub().as_ref(), self, handle_network_message);
+        
+        Ok(())
     }
 
     fn handle_network_message(
@@ -452,8 +472,7 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocolHandle {
 
     fn handle_timeouts_safe(&self, timeouts: Vec<ModTimeout>) -> Result<ReconfigResponse> {
         self.channel_tx
-            .send_return(ReconfigMessage::TimeoutReceived(timeouts))
-            .unwrap();
+            .send(ReconfigMessage::TimeoutReceived(timeouts))?;
 
         Ok(ReconfigResponse::Running)
     }
