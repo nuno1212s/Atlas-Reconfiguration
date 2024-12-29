@@ -64,11 +64,11 @@ impl ThresholdCrypto {
 }
 
 impl QuorumThresholdCrypto for ThresholdCrypto {
-    fn own_pub_key(&self) -> atlas_common::error::Result<PublicKeyPart> {
+    fn own_pub_key(&self) -> PublicKeyPart {
         self.pk_set.public_key_share(self.our_index)
     }
 
-    fn pub_key_for_node(&self, node: NodeId) -> atlas_common::error::Result<PublicKeyPart> {
+    fn pub_key_for_node(&self, node: NodeId) -> PublicKeyPart {
         self.pk_set.public_key_share(self.id_of_node(node))
     }
 
