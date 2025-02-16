@@ -4,7 +4,7 @@ use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
 use atlas_common::error::*;
-use atlas_common::{Err};
+use atlas_common::Err;
 use atlas_communication::message::{Header, StoredMessage};
 use atlas_core::reconfiguration_protocol::QuorumReconfigurationResponse;
 

@@ -6,8 +6,8 @@ use futures::future::join_all;
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
-use atlas_common::channel::sync::ChannelSyncTx;
 use atlas_common::channel::oneshot::OneShotRx;
+use atlas_common::channel::sync::ChannelSyncTx;
 use atlas_common::crypto::signature::{KeyPair, PublicKey};
 use atlas_common::error::*;
 use atlas_common::node_id::{NodeId, NodeType};
@@ -21,9 +21,7 @@ use atlas_communication::reconfiguration::{
     ReconfigurationNetworkUpdate, ReconfigurationNetworkUpdateMessage,
 };
 use atlas_communication::stub::{ModuleOutgoingStub, RegularNetworkStub};
-use atlas_core::reconfiguration_protocol::{
-    NodeConnectionUpdateMessage,
-};
+use atlas_core::reconfiguration_protocol::NodeConnectionUpdateMessage;
 use atlas_core::timeouts::timeout::TimeoutModHandle;
 use atlas_core::timeouts::TimeoutID;
 

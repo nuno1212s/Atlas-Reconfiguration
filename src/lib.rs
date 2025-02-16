@@ -6,9 +6,8 @@ extern crate core;
 
 use getset::Getters;
 use lazy_static::lazy_static;
-use std::sync::{Arc};
+use std::sync::Arc;
 use std::time::Duration;
-
 
 use tracing::{debug, error, info, warn};
 
@@ -21,13 +20,12 @@ use atlas_communication::message::{Header, StoredMessage};
 use atlas_communication::reconfiguration::{
     NetworkInformationProvider, NetworkUpdatedMessage, ReconfigurationNetworkCommunication,
 };
-use atlas_communication::stub::{ RegularNetworkStub};
+use atlas_communication::stub::RegularNetworkStub;
 use atlas_core::reconfiguration_protocol::{
-     QuorumJoinCert, ReconfigResponse,
-    ReconfigurationCommunicationHandles, ReconfigurationProtocol,
+    QuorumJoinCert, ReconfigResponse, ReconfigurationCommunicationHandles, ReconfigurationProtocol,
 };
 use atlas_core::timeouts::timeout::{ModTimeout, TimeoutModHandle, TimeoutableMod};
-use atlas_core::timeouts::{ TimeoutID,};
+use atlas_core::timeouts::TimeoutID;
 
 use crate::config::ReconfigurableNetworkConfig;
 use crate::message::{ReconfData, ReconfigMessage, ReconfigurationMessage};
@@ -211,15 +209,14 @@ where
             self.receive_from_incoming_channels()?;
         }
     }
-    
+
     fn receive_from_incoming_channels(&mut self) -> Result<()>
     where
         NT: RegularNetworkStub<ReconfData> + 'static,
     {
         self.receive_from_incoming_channels_exhaust()
     }
-    
-    
+
     /*fn receive_from_incoming_channels_select(&mut self) -> Result<()>
     where
         NT: RegularNetworkStub<ReconfData> + 'static,
@@ -237,16 +234,25 @@ where
             default(*MESSAGE_SLEEP) => Ok(())
         }
     }*/
-    
+
     fn receive_from_incoming_channels_exhaust(&mut self) -> Result<()>
-        where NT: RegularNetworkStub<ReconfData> + 'static, {
-        
+    where
+        NT: RegularNetworkStub<ReconfData> + 'static,
+    {
         exhaust_and_consume!(self.channel_rx, self, handle_message_from_orchestrator);
-        
-        exhaust_and_consume!(self.reconfig_network.network_update_receiver(), self, handle_network_update_message);
-        
-        exhaust_and_consume!(self.network_node.incoming_stub().as_ref(), self, handle_network_message);
-        
+
+        exhaust_and_consume!(
+            self.reconfig_network.network_update_receiver(),
+            self,
+            handle_network_update_message
+        );
+
+        exhaust_and_consume!(
+            self.network_node.incoming_stub().as_ref(),
+            self,
+            handle_network_message
+        );
+
         Ok(())
     }
 
@@ -464,7 +470,10 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocolHandle {
         (view.quorum_members().clone(), view.f())
     }
 
-    fn is_join_certificate_valid(&self, _certificate: &QuorumJoinCert<Self::Serialization>) -> bool {
+    fn is_join_certificate_valid(
+        &self,
+        _certificate: &QuorumJoinCert<Self::Serialization>,
+    ) -> bool {
         //TODO: Analyse the veracity of this join certificate according to the information we have on the
         // current quorum
         true

@@ -1,7 +1,4 @@
-use crate::message::{
-    OperationMessage, QuorumObtainInfoOpMessage,
-    QuorumViewCert,
-};
+use crate::message::{OperationMessage, QuorumObtainInfoOpMessage, QuorumViewCert};
 use crate::quorum_config::network::QuorumConfigNetworkNode;
 use crate::quorum_config::operations::{
     Operation, OperationExecutionCandidateError, OperationResponse,
@@ -11,9 +8,7 @@ use atlas_common::crypto::hash::Digest;
 use atlas_common::node_id::NodeId;
 use atlas_common::Err;
 use atlas_communication::message::{Header, StoredMessage};
-use atlas_core::reconfiguration_protocol::{
-    QuorumReconfigurationResponse,
-};
+use atlas_core::reconfiguration_protocol::QuorumReconfigurationResponse;
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 use tracing::{debug, error, info};

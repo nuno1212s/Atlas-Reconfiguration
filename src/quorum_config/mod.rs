@@ -482,11 +482,7 @@ impl OnGoingOperations {
                     }
                 }
             }
-            NodeStatusType::QuorumNode {
-                current_state,
-                
-                ..
-            } => {
+            NodeStatusType::QuorumNode { current_state, .. } => {
                 if let ReplicaState::Awaiting = current_state {
                     if !self.has_operation_of_type(ObtainQuorumInfoOP::OP_NAME) {
                         info!("Launching quorum info operation as we have not yet obtained the quorum info");
