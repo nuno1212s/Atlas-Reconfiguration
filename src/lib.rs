@@ -9,7 +9,7 @@ use lazy_static::lazy_static;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
 use atlas_common::error::*;
@@ -166,7 +166,7 @@ where
         NT: RegularNetworkStub<ReconfData> + 'static,
     {
         loop {
-            debug!(
+            trace!(
                 "Iterating the reconfiguration protocol, current state {:?}",
                 self.node_state
             );
@@ -214,10 +214,10 @@ where
     where
         NT: RegularNetworkStub<ReconfData> + 'static,
     {
-        self.receive_from_incoming_channels_exhaust()
+        self.receive_from_incoming_channels_select()
     }
 
-    /*fn receive_from_incoming_channels_select(&mut self) -> Result<()>
+    fn receive_from_incoming_channels_select(&mut self) -> Result<()>
     where
         NT: RegularNetworkStub<ReconfData> + 'static,
     {
@@ -229,11 +229,16 @@ where
                 self.handle_network_update_message(network_update_message?)
             }
             recv(unwrap_channel!(self.network_node.incoming_stub().as_ref())) -> network_msg => {
-                self.handle_network_message(network_msg?)
+                exhaust_and_consume!(
+                    network_msg?,
+                    self.network_node.incoming_stub().as_ref(),
+                    self,
+                    handle_network_message
+                )
             }
             default(*MESSAGE_SLEEP) => Ok(())
         }
-    }*/
+    }
 
     fn receive_from_incoming_channels_exhaust(&mut self) -> Result<()>
     where
