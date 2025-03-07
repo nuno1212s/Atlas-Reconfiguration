@@ -27,6 +27,6 @@ futures = "*"
 
 tracing = "*"
 
-bincode = "2.0.0-rc.3"
+bincode = "2"
 serde = {version = "1"}
 either = "*"
