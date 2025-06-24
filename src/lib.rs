@@ -4,14 +4,15 @@
 
 extern crate core;
 
+use anyhow::Context;
 use getset::Getters;
 use lazy_static::lazy_static;
 use std::sync::Arc;
 use std::time::Duration;
-
 use tracing::{debug, error, info, trace, warn};
 
 use atlas_common::channel::sync::{ChannelSyncRx, ChannelSyncTx};
+use atlas_common::circuit_breaker::CircuitBreaker;
 use atlas_common::error::*;
 use atlas_common::node_id::NodeId;
 use atlas_common::ordering::{Orderable, SeqNo};
@@ -96,38 +97,6 @@ where
     channel_rx: ChannelSyncRx<ReconfigMessage>,
     /// The type of the node we are running.
     node_type: Node,
-}
-
-#[derive(Debug)]
-struct SeqNoGen {
-    seq: SeqNo,
-}
-
-/// The handle to the current reconfigurable node information.
-///
-pub struct ReconfigurableNodeProtocolHandle {
-    network_info: Arc<NetworkInfo>,
-    quorum_info: QuorumObserver,
-    channel_tx: ChannelSyncTx<ReconfigMessage>,
-}
-
-/// The result of the iteration of the node
-#[derive(Clone, Debug)]
-enum IterationResult {
-    ReceiveMessage,
-    Idle,
-}
-
-impl SeqNoGen {
-    pub fn curr_seq(&self) -> SeqNo {
-        self.seq
-    }
-
-    pub fn next_seq(&mut self) -> SeqNo {
-        self.seq += SeqNo::ONE;
-
-        self.seq
-    }
 }
 
 impl<NT> ReconfigurableNode<NT>
@@ -223,14 +192,14 @@ where
     {
         channel::sync::sync_select_biased! {
             recv(unwrap_channel!(self.channel_rx)) -> orchestrator_message => {
-                self.handle_message_from_orchestrator(orchestrator_message?)
+                self.handle_message_from_orchestrator(orchestrator_message.context("Orchestrator message")?)
             }
             recv(unwrap_channel!(self.reconfig_network.network_update_receiver())) -> network_update_message => {
-                self.handle_network_update_message(network_update_message?)
+                self.handle_network_update_message(network_update_message.context("Update message")?)
             }
             recv(unwrap_channel!(self.network_node.incoming_stub().as_ref())) -> network_msg => {
                 exhaust_and_consume!(
-                    network_msg?,
+                    network_msg.context("Network stub receive")?,
                     self.network_node.incoming_stub().as_ref(),
                     self,
                     handle_network_message
@@ -377,6 +346,31 @@ where
     }
 }
 
+#[derive(Debug)]
+struct SeqNoGen {
+    seq: SeqNo,
+}
+
+impl SeqNoGen {
+    pub fn curr_seq(&self) -> SeqNo {
+        self.seq
+    }
+
+    pub fn next_seq(&mut self) -> SeqNo {
+        self.seq += SeqNo::ONE;
+
+        self.seq
+    }
+}
+
+/// The handle to the current reconfigurable node information.
+///
+pub struct ReconfigurableNodeProtocolHandle {
+    network_info: Arc<NetworkInfo>,
+    quorum_info: QuorumObserver,
+    channel_tx: ChannelSyncTx<ReconfigMessage>,
+}
+
 impl TimeoutableMod<ReconfigResponse> for ReconfigurableNodeProtocolHandle {
     fn mod_name() -> Arc<str> {
         MOD_NAME.clone()
@@ -441,13 +435,11 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocolHandle {
                     node_type,
                 };
 
-                loop {
-                    if let Err(err) = reconfigurable_node.run() {
-                        error!(
-                            "Error while running the reconfiguration protocol: {:?}",
-                            err
-                        );
-                    }
+                if let Err(err) = CircuitBreaker::execute_in_circuit_breaker(|| reconfigurable_node.run(), None) {
+                    error!(
+                        "Consistent error while running the reconfiguration protocol: {:?}. Terminating thread.",
+                        err
+                    );
                 }
             })
             .expect("Failed to launch reconfiguration protocol thread");
@@ -490,4 +482,11 @@ impl ReconfigurationProtocol for ReconfigurableNodeProtocolHandle {
 
         Ok(ReconfigResponse::Running)
     }
+}
+
+/// The result of the iteration of the node
+#[derive(Clone, Debug)]
+enum IterationResult {
+    ReceiveMessage,
+    Idle,
 }
