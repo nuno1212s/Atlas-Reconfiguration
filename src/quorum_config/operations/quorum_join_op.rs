@@ -266,7 +266,7 @@ impl Operation for EnterQuorumOperation {
             .data()
             .get(ObtainQuorumInfoOP::OP_NAME, ObtainQuorumInfoOP::LAST_EXEC);
 
-        if let None = last_execution {
+        if last_execution.is_none() {
             return Err(OperationExecutionCandidateError::RequirementsNotMet(
                 format!("{}", JoinExecErr::QuorumInformationMustBeObtained),
             ));

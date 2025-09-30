@@ -408,7 +408,7 @@ impl LockedQC {
     }
 
     pub fn quorum(&self) -> &QuorumView {
-        &self.proofs.first().unwrap().message().view()
+        self.proofs.first().unwrap().message().view()
     }
 
     pub fn proofs(&self) -> &Vec<StoredMessage<QuorumAcceptResponse>> {
@@ -426,7 +426,7 @@ impl CommittedQC {
     }
 
     pub fn quorum(&self) -> &QuorumView {
-        &self.proofs.first().unwrap().message().view()
+        self.proofs.first().unwrap().message().view()
     }
 
     pub fn proofs(&self) -> &Vec<StoredMessage<QuorumCommitAcceptResponse>> {
@@ -456,7 +456,7 @@ impl<T> Debug for OrderedBCastMessage<T> {
                 write!(f, "OrderedBCastMessage::Order()")
             }
             OrderedBCastMessage::OrderVote(vote) => {
-                write!(f, "OrderedBCastMessage::OrderVote({:?})", vote)
+                write!(f, "OrderedBCastMessage::OrderVote({vote:?})")
             }
         }
     }

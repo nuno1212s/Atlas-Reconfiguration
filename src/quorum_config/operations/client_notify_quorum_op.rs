@@ -36,7 +36,7 @@ impl Operation for NotifyClientOperation {
             NodeStatusType::ClientNode { .. } => Ok(()),
             _ => {
                 Err!(OperationExecutionCandidateError::InvalidNodeType(
-                    observer.node_info().node_type().clone()
+                    observer.node_info().node_type()
                 ))
             }
         }
@@ -60,7 +60,7 @@ impl Operation for NotifyClientOperation {
 
                 self.state = OperationState::Done;
 
-                return Ok(OperationResponse::Completed);
+                Ok(OperationResponse::Completed)
             }
             OperationState::Done => Ok(OperationResponse::Completed),
         }
