@@ -71,7 +71,7 @@ impl ObtainQuorumInfoOP {
         let mut received_messages = Vec::new();
 
         for (message_digests, messages) in self.quorum_views.iter() {
-            received_messages.push((message_digests.clone(), messages.clone()));
+            received_messages.push((*message_digests, messages.clone()));
         }
 
         received_messages.sort_by(|(_, a), (_, b)| a.len().cmp(&b.len()).reverse());
@@ -87,7 +87,7 @@ impl ObtainQuorumInfoOP {
                 Err!(QuorumObtainInfoError::FailedNotEnoughMatching(
                     self.threshold,
                     quorum_certs.len(),
-                    quorum_digest.clone()
+                    *quorum_digest
                 ))
             }
         } else {
@@ -153,11 +153,11 @@ impl Operation for ObtainQuorumInfoOP {
                     debug!("Received quorum information from node {:?} with information {:?}, digest {:?}", header.from(), quorum, header.digest());
                     *received += 1;
 
-                    let digest = header.digest().clone();
+                    let digest = *header.digest();
 
                     self.quorum_views
                         .entry(digest)
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(StoredMessage::new(header, quorum));
 
                     if *received >= self.threshold {
@@ -221,7 +221,6 @@ impl Operation for ObtainQuorumInfoOP {
     }
 }
 
-///
 #[derive(Debug, Error)]
 pub enum QuorumObtainInfoError {
     #[error("Failed to obtain quorum information: No messages received")]

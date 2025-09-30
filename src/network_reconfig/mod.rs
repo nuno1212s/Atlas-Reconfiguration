@@ -464,7 +464,7 @@ impl GeneralNodeInfo {
                         quiet_unwrap!(conn_results, Ok(NetworkProtocolResponse::Nil));
 
                     for conn_result in conn_results {
-                        if let Err(err) = conn_result.recv().unwrap() {
+                        if let Err(err) = conn_result.recv()? {
                             error!("Error while connecting to another node: {:?}", err);
                         }
                     }
@@ -554,12 +554,15 @@ impl GeneralNodeInfo {
                 }
 
                 for (_node, conn_results) in node_results {
-                    let conn_results = quiet_unwrap!(conn_results, NetworkProtocolResponse::Nil);
-
-                    for conn_result in conn_results {
-                        if let Err(err) = conn_result.recv().unwrap() {
-                            error!("Error while connecting to another node: {:?}", err);
+                    match conn_results {
+                        Ok(conn_results) => {
+                            for conn_result in conn_results {
+                                if let Err(err) = conn_result.recv().unwrap() {
+                                    error!("Error while connecting to another node: {:?}", err);
+                                }
+                            }
                         }
+                        Err(_) => return NetworkProtocolResponse::Nil,
                     }
                 }
 
@@ -636,8 +639,7 @@ impl GeneralNodeInfo {
                 certificates,
             } => {
                 // Avoid accepting double answers
-
-                return match message {
+                match message {
                     NetworkReconfigMessageType::NetworkJoinRequest(join_request) => {
                         info!(
                             "Received a network join request from {:?} while joining the network",
@@ -753,7 +755,7 @@ impl GeneralNodeInfo {
                         // Ignored as we are not yet in this phase
                         NetworkProtocolResponse::Nil
                     }
-                };
+                }
             }
             NetworkNodeState::IntroductionPhase {
                 contacted,
@@ -820,7 +822,7 @@ impl GeneralNodeInfo {
                     }
                 }
 
-                return NetworkProtocolResponse::Nil;
+                NetworkProtocolResponse::Nil
             }
             NetworkNodeState::StableMember => {
                 match message {

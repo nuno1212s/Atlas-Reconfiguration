@@ -43,7 +43,6 @@ pub mod operations;
 /// It's completely lacking support for timeouts, so most faults are not actually tolerated.
 /// It's also ugly and did not turn out one bit like I initially thought, so it's a mess.
 /// In the future I might remake it, but not really sure if it's worth it.
-
 /// This is a simple observer of the quorum, which might then be extended to support
 /// Other features, such as quorum reconfiguration or just keeping track of the quorum
 /// (in the case of clients)
@@ -795,6 +794,12 @@ impl NodeOpData {
         self.op_data
             .remove(&((op, key).into()))
             .and_then(|v| v.downcast::<T>().ok())
+    }
+}
+
+impl Default for NodeOpData {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

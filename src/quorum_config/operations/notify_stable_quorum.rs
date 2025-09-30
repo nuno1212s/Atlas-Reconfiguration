@@ -41,10 +41,10 @@ impl Operation for NotifyQuorumOperation {
         Self: Sized,
     {
         match observer.node_info().node_type() {
-            NodeType::Replica { .. } => Ok(()),
+            NodeType::Replica => Ok(()),
             _ => {
                 Err!(OperationExecutionCandidateError::InvalidNodeType(
-                    observer.node_info().node_type().clone()
+                    observer.node_info().node_type()
                 ))
             }
         }
@@ -58,19 +58,16 @@ impl Operation for NotifyQuorumOperation {
     where
         NT: QuorumConfigNetworkNode + 'static,
     {
-        match &self.current_state {
-            OperationState::Waiting => {
-                let view_members = node.observer().current_view().quorum_members().clone();
+        if let OperationState::Waiting = self.current_state {
+            let view_members = node.observer().current_view().quorum_members().clone();
 
-                node.node_type().quorum_communication().send(
-                    QuorumReconfigurationMessage::ReconfigurationProtocolStable(view_members),
-                )?;
+            node.node_type().quorum_communication().send(
+                QuorumReconfigurationMessage::ReconfigurationProtocolStable(view_members),
+            )?;
 
-                self.current_state = OperationState::WaitingQuorumResponse;
+            self.current_state = OperationState::WaitingQuorumResponse;
 
-                return Ok(OperationResponse::AwaitingResponseProtocol);
-            }
-            _ => {}
+            return Ok(OperationResponse::AwaitingResponseProtocol);
         }
 
         Ok(OperationResponse::Processing)
@@ -98,7 +95,7 @@ impl Operation for NotifyQuorumOperation {
     where
         NT: QuorumConfigNetworkNode + 'static,
     {
-        return match self.current_state {
+        match self.current_state {
             OperationState::Waiting => {
                 unreachable!("We should not be waiting for a quorum response at this point")
             }
@@ -111,7 +108,7 @@ impl Operation for NotifyQuorumOperation {
                 _ => Ok(OperationResponse::AwaitingResponseProtocol),
             },
             OperationState::Done => Ok(OperationResponse::Completed),
-        };
+        }
     }
 
     fn finish<NT>(

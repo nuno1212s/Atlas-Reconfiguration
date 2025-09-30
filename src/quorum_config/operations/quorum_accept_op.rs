@@ -430,7 +430,7 @@ where
 
     if qc.proofs().len() < needed_quorum {
         // The QC does not have enough votes to be valid
-        return Err(HandleQCError::QCNotEnoughVotes(
+        return Err(HandleQCError::NotEnoughVotes(
             needed_quorum,
             qc.proofs().len(),
         ));
@@ -438,7 +438,7 @@ where
 
     match qc.sequence_number().index(current_quorum.sequence_number()) {
         Either::Left(_) | Either::Right(0) => {
-            return Err(HandleQCError::QCTooOld(
+            return Err(HandleQCError::TooOld(
                 qc.sequence_number(),
                 current_quorum.sequence_number(),
             ));
@@ -458,19 +458,19 @@ where
 
     for stored_response in qc.proofs() {
         if *stored_response.view() != *quorum_view {
-            return Err(HandleQCError::QCNotAllMatch);
+            return Err(HandleQCError::NotAllMatch);
         }
     }
 
-    return Ok(());
+    Ok(())
 }
 
 #[derive(Error, Debug)]
 pub enum HandleQCError {
     #[error("Not enough votes, needed {0}, received {1}")]
-    QCNotEnoughVotes(usize, usize),
+    NotEnoughVotes(usize, usize),
     #[error("Not all votes on the received certificate match the same quorum view")]
-    QCNotAllMatch,
+    NotAllMatch,
     #[error("The sequence number indicated by the request is too old as our quorum is already ahead {0:?} vs {1:?}")]
-    QCTooOld(SeqNo, SeqNo),
+    TooOld(SeqNo, SeqNo),
 }
